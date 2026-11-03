@@ -1,0 +1,4 @@
+#!/bin/sh
+# shellventure: a terminal adventure for real DevOps skills
+DIR=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+exec python3 "$DIR/shellventure/shellventure.py" "$@"

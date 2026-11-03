@@ -1,0 +1,12 @@
+name: test
+on: [push, pull_request]
+jobs:
+  solve-all-rooms:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+      - run: pip install rich
+      - run: python3 tests/solve_all.py
