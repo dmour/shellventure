@@ -249,7 +249,17 @@ def make(api):
          "task": "Build [bold]shellventure/door:1[/] from this folder so that\n`docker run --rm shellventure/door:1` prints the code. Then: [cyan]check[/]",
          "hints": ["`docker build -t shellventure/door:1 .`  Read the error.",
                    "Compare the file name in the Dockerfile with `ls`. Then look at .dockerignore.",
-                   "Fix COPY to door_code.txt AND allow it in .dockerignore (add `!door_code.txt`)."]},
+                   "Fix COPY to door_code.txt AND allow it in .dockerignore (add `!door_code.txt`)."],
+         "steps": [
+             {"name": "COPY names the wrong file", "done": lambda d, w: "door_code.txt" in (d / "1-broken-build" / "Dockerfile").read_text(),
+              "hints": ["`docker build -t shellventure/door:1 .`  Read the error: which file is missing?",
+                        "Compare the name in the COPY line with `ls`.", "Change COPY to `door_code.txt`."]},
+             {"name": ".dockerignore hides the file", "done": lambda d, w: "!door_code.txt" in (d / "1-broken-build" / ".dockerignore").read_text()
+                                                                          or "*.txt" not in (d / "1-broken-build" / ".dockerignore").read_text(),
+              "hints": ["The name is right, still 'not found'? Something hides files from the build.",
+                        "`cat .dockerignore`  Which pattern matches door_code.txt?",
+                        "Add a line `!door_code.txt` to .dockerignore, then build again."]},
+         ]},
         {"name": "The Fat Image", "dir": "2-fat-image", "check": d_slim,
          "story": "The Dockerfile deletes a 60 MB file. The image is still 64 MB. [bold]Why?[/]",
          "task": "Rebuild [bold]shellventure/slim:1[/] under 10 MB. Keep creating /big and its checksum.\nThen: [cyan]check[/]",

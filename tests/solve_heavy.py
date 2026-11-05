@@ -48,6 +48,15 @@ def check(world, room, answer=None, expect=True, tries=1):
     print(f"  {'✔' if ok == expect else '✘'} {label}", flush=True)
 
 
+def hint_part(world, part, label):
+    """Smart hints: the hint must be about the first part that is still broken (part 0 = all fixed)."""
+    out = esc("_hint", world=world)
+    ok = ("Every part looks fixed" in out) if part == 0 else (f"part {part}/" in out)
+    if not ok:
+        fails.append(f"{world} {label}: expected {'all fixed' if part == 0 else f'a hint for part {part}'}\n{out[-300:]}")
+    print(f"  {'✔' if ok else '✘'} {world} {label}: {'all parts fixed' if part == 0 else f'hint is for part {part}'}", flush=True)
+
+
 def d(world, sub=""):
     return ROOM_DIR / world / sub if sub else ROOM_DIR / world
 
@@ -81,7 +90,10 @@ def port_forward(target, ns, remote):
 def docker():
     r = d("docker", "1-broken-build")
     check("docker", 1, expect=False)
-    sh("sed -i 's/door-code.txt/door_code.txt/' Dockerfile && echo '!door_code.txt' >> .dockerignore", r)
+    hint_part("docker", 1, "room 1 nothing fixed")
+    sh("sed -i 's/door-code.txt/door_code.txt/' Dockerfile", r)
+    hint_part("docker", 2, "room 1 COPY fixed")
+    sh("echo '!door_code.txt' >> .dockerignore", r)
     sh("docker build -q -t shellventure/door:1 .", r, check=True)
     check("docker", 1)
     r = d("docker", "2-fat-image")
@@ -152,7 +164,9 @@ def k8s():
     rollout("room4-monster", "monster")
     check("k8s", 4, tries=3)
     check("k8s", 5, expect=False)
+    hint_part("k8s", 1, "room 5 nothing fixed")
     sh(f"{K} delete quota lock -n room5-gate", check=True)
+    hint_part("k8s", 2, "room 5 quota fixed")
     sh(f"{K} patch deploy gate -n room5-gate --type=json "
        "-p='[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/readinessProbe/httpGet/port\",\"value\":80}]'", check=True)
     rollout("room5-gate", "gate")
@@ -212,6 +226,7 @@ def network():
 
 def boss():
     check("boss", 1, expect=False)
+    hint_part("boss", 1, "nothing fixed")
     # a player fixes what they find; the solver applies all 6 usual fixes (the ones not broken are no-ops)
     sh(f"{K} delete quota lock -n boss --ignore-not-found")
     sh(f"{K} patch secret boss-secret -n boss -p '{{\"stringData\":{{\"token\":\"s3cret\"}}}}'")
@@ -220,6 +235,7 @@ def boss():
        "{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/image\",\"value\":\"nginx:1.27-alpine\"},"
        "{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/readinessProbe/httpGet/port\",\"value\":80},"
        "{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/resources/limits/memory\",\"value\":\"64Mi\"}]'", check=True)
+    hint_part("boss", 0, "after all fixes")
     sh(f"{K} rollout restart deploy/boss-app -n boss")
     rollout("boss", "boss-app", "120s")
     check("boss", 1, tries=4)

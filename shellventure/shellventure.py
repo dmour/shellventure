@@ -11,7 +11,7 @@ Everything runs under ~/shellventure-lab. The k8s world uses its own kind cluste
 kubeconfig; the gcloud world uses its own CLOUDSDK_CONFIG. Work clusters and GCP
 are never touched.
 """
-import configparser, hashlib, json, os, random, re, shutil, subprocess, sys, time
+import configparser, hashlib, io, json, os, random, re, shutil, subprocess, sys, time
 from pathlib import Path
 
 from rich import box
@@ -241,7 +241,21 @@ BASH = {
          "task": "Make [bold]./open-door.sh[/] run by itself (not `bash open-door.sh`).\nThen: [cyan]check[/]",
          "hints": ["Look at the file closely: `cat -A open-door.sh | head -2`. What is ^M?",
                    "Windows line endings: `sed -i 's/\\r$//' open-door.sh`. Then look at line 1.",
-                   "Fix the shebang to `#!/bin/bash` and run `chmod +x open-door.sh`."]},
+                   "Fix the shebang to `#!/bin/bash` and run `chmod +x open-door.sh`."],
+         "steps": [
+             {"name": "Windows line endings", "done": lambda d, w: b"\r" not in (d / "3-broken-script" / "open-door.sh").read_bytes(),
+              "hints": ["Look at the file closely: `cat -A open-door.sh | head -2`. What is ^M?",
+                        "^M is \\r: Windows line endings. Linux reads `#!/bin/bash\\r` as a different program.",
+                        "`sed -i 's/\\r$//' open-door.sh`"]},
+             {"name": "the shebang (line 1)", "done": lambda d, w: os.path.exists(
+                 (d / "3-broken-script" / "open-door.sh").read_text().splitlines()[0].removeprefix("#!").strip()),
+              "hints": ["Read line 1: `head -1 open-door.sh`. Does that program exist?",
+                        "`ls -l /bin/bahs` vs `ls -l /bin/bash`",
+                        "`sed -i '1s|.*|#!/bin/bash|' open-door.sh`"]},
+             {"name": "the execute bit", "done": lambda d, w: os.access(d / "3-broken-script" / "open-door.sh", os.X_OK),
+              "hints": ["`ls -l open-door.sh`: is there an x in the bits?",
+                        "`./file` only runs files with the execute bit.", "`chmod +x open-door.sh`"]},
+         ]},
         {"name": "The JSON Vault", "dir": "4-json-vault", "answer": True,
          "story": "A building of 5 floors. Only one door leads out.",
          "task": "On [bold]floor 3[/], find the door that is [bold]blue[/] and [bold]not locked[/].\n"
@@ -520,7 +534,20 @@ K8S = {
          "task": "Namespace [bold]room5-gate[/]. Make deploy/gate Ready. Keep a readiness probe.\nThen: [cyan]check[/]",
          "hints": ["No pods? Look at the ReplicaSet events: `kubectl describe rs -n room5-gate`",
                    "Lock 1 is a ResourceQuota. Lock 2 shows up after: nginx listens on port 80.",
-                   "Delete/raise quota `lock`, then fix the readinessProbe port to 80."]},
+                   "Delete/raise quota `lock`, then fix the readinessProbe port to 80."],
+         "steps": [
+             {"name": "lock 1: no pods are allowed", "done": lambda d, w: kc("get", "quota", "lock", "-n", "room5-gate",
+                                                                            "-o", "jsonpath={.spec.hard.pods}", check=False) != "0",
+              "hints": ["No pods? Look at the ReplicaSet events: `kubectl describe rs -n room5-gate`",
+                        "Something limits the namespace: `kubectl get quota -n room5-gate`",
+                        "`kubectl delete quota lock -n room5-gate`"]},
+             {"name": "lock 2: the pod never gets Ready", "done": lambda d, w: kc(
+                 "get", "deploy", "gate", "-n", "room5-gate", "-o",
+                 "jsonpath={.spec.template.spec.containers[0].readinessProbe.httpGet.port}", check=False) == "80",
+              "hints": ["Pods run but show 0/1? `kubectl describe pod -n room5-gate` and read the Events.",
+                        "nginx listens on port 80. Which port does the readiness probe call?",
+                        "`kubectl edit deploy gate -n room5-gate` and set readinessProbe port to 80."]},
+         ]},
     ]}
 
 
@@ -834,25 +861,70 @@ def badge_line(s):
     return "  ".join(f"[bold yellow]★ {n}[/]" if b in have else f"[grey35]☆ {n}[/]" for b, n, _h, _t in BADGES)
 
 
+def room_steps(r, w):
+    """A room with several problems lists them as steps: {"name", "done": fn(dir, w) -> bool, "hints": [...]}."""
+    st = r.get("steps")
+    return (st(w) if callable(st) else st) or []
+
+
+def step_done(key, step, w):
+    try:
+        return bool(step["done"](ROOT / WORLDS[key]["dir"], w))
+    except Exception:
+        return False
+
+
+def hints_left(key, s):
+    W, w = WORLDS[key], world_state(s, key)
+    i = w["room"]
+    r, dif = W["rooms"][i], DIFF[settings(s)["difficulty"]]
+    steps = room_steps(r, w)
+    budget = dif["max_hints"] * len(steps) if steps else min(dif["max_hints"], len(r["hints"]))
+    return max(budget - w["hints"].get(str(i + 1), 0), 0)
+
+
+def give_hint(key, s, i, text, title):
+    w = world_state(s, key)
+    w["hints"][str(i + 1)] = w["hints"].get(str(i + 1), 0) + 1   # the room total: XP cost + "hints left"
+    save(s)
+    pretty = re.sub(r"`([^`]+)`", r"[bold cyan]\1[/]", escape_markup(text))
+    cost = DIFF[settings(s)["difficulty"]]["hint_cost"]
+    con.print(Panel(pretty, title=f"{title}  ({'free' if not cost else f'-{cost} XP'})", border_style="yellow"))
+
+
 def do_hint(key, s):
     W, w = WORLDS[key], world_state(s, key)
     i = w["room"]
     if i >= len(W["rooms"]):
         return
+    r, dif = W["rooms"][i], DIFF[settings(s)["difficulty"]]
+    steps = room_steps(r, w)
+    if steps:   # smart hints: skip what is already fixed, help with the first broken part only
+        done = [step_done(key, st, w) for st in steps]
+        for st, ok in zip(steps, done):
+            if ok:
+                con.print(f"[green]✔ already fixed:[/] {st['name']}")
+        if all(done):
+            con.print("[green]Every part looks fixed.[/] Type [cyan]check[/].")
+            return
+        k = done.index(False)
+        used = w.setdefault("step_hints", {}).setdefault(str(i + 1), {})
+        n = used.get(str(k), 0)
+        if n >= min(dif["max_hints"], len(steps[k]["hints"])):
+            con.print(f"[yellow]No more hints for this part ({steps[k]['name']}). You can do it.[/]")
+            return
+        used[str(k)] = n + 1
+        give_hint(key, s, i, steps[k]["hints"][n], f"part {k + 1}/{len(steps)}: {steps[k]['name']} · hint {n + 1}/3")
+        return
     n = w["hints"].get(str(i + 1), 0)
-    hints = W["rooms"][i]["hints"]
-    dif = DIFF[settings(s)["difficulty"]]
+    hints = r["hints"]
     if n >= dif["max_hints"] and n < len(hints):
         con.print(f"[yellow]Hard mode: only {dif['max_hints']} hint per room. You can do it.[/]")
         return
     if n >= len(hints):
         con.print("[yellow]No more hints. The last one is the answer path. You can do it.[/]")
         return
-    w["hints"][str(i + 1)] = n + 1
-    save(s)
-    pretty = re.sub(r"`([^`]+)`", r"[bold cyan]\1[/]", escape_markup(hints[n]))
-    cost = DIFF[settings(s)["difficulty"]]["hint_cost"]
-    con.print(Panel(pretty, title=f"hint {n + 1}/3  ({'free' if not cost else f'-{cost} XP'})", border_style="yellow"))
+    give_hint(key, s, i, hints[n], f"hint {n + 1}/3")
 
 
 def show_map(s):
@@ -890,18 +962,43 @@ def status_line(key, s):
     i = w["room"]
     if i >= len(W["rooms"]):
         return
-    dif = DIFF[settings(s)["difficulty"]]
-    left = max(min(dif["max_hints"], len(W["rooms"][i]["hints"])) - w["hints"].get(str(i + 1), 0), 0)
+    left = hints_left(key, s)
     took = fmt_time(time.time() - (w["start"] or time.time()))
     con.rule(f"[magenta]{W['title']}[/] [grey50]·[/] {i + 1}/{len(W['rooms'])} [bold]{W['rooms'][i]['name']}[/] "
              f"[grey50]·[/] {took} [grey50]·[/] hints left {left}", style="grey30")
 
 
+PIN_ROWS, PIN_MIN = 3, 12   # pinned header height; below PIN_MIN terminal rows the old status bar is used
+
+
+def pinned():
+    return shutil.get_terminal_size((80, 24)).lines >= PIN_MIN
+
+
+def pin_header(key, s, cols):
+    """The 3 lines pinned at the top of the game shell: status, task in one line, a rule."""
+    W, w = WORLDS[key], world_state(s, key)
+    i = w["room"]
+    if i >= len(W["rooms"]):
+        return
+    r = W["rooms"][i]
+    left = hints_left(key, s)
+    took = fmt_time(time.time() - (w["start"] or time.time()))
+    task = " ".join(Text.from_markup(r["task"]).plain.split())
+    out = Console(file=io.StringIO(), width=cols, force_terminal=True, color_system=con.color_system or "standard")
+    out.print(Text.from_markup(f"[bold magenta]{W['title']}[/] [grey50]·[/] {i + 1}/{len(W['rooms'])} "
+                               f"[bold yellow]{r['name']}[/] [grey50]·[/] {took} [grey50]·[/] hints {left}"),
+              no_wrap=True, overflow="ellipsis")
+    out.print(Text.assemble(("Task: ", "bold cyan"), task), no_wrap=True, overflow="ellipsis")
+    out.print(Text("─" * cols, style="grey30"), no_wrap=True)
+    sys.stdout.write(out.file.getvalue())
+
+
 def autocheck(key, s):
-    """After every command: fix-it rooms are checked quietly (door opens on success); then the status bar.
-    Exit 10 = world finished."""
+    """After every command: fix-it rooms are checked quietly (door opens on success); then the status bar
+    (only on small screens: bigger ones get the pinned header). Exit 10 = world finished."""
     rc = _autocheck(key, s)
-    if rc != 10:
+    if rc != 10 and not pinned():
         status_line(key, load())
     return rc
 
@@ -949,7 +1046,10 @@ def play(key, s):
     s["active"] = key
     save(s)
     con.clear()
-    con.print(Align.center(Text(BANNER, style="bold magenta") if con.width >= 56 else SMALL_BANNER))
+    if pinned():
+        con.print("\n" * (PIN_ROWS - 1))   # these rows become the pinned header at the first prompt
+    else:
+        con.print(Align.center(Text(BANNER, style="bold magenta") if con.width >= 56 else SMALL_BANNER))
     if settings(s).get("story") and key in STORY and w["room"] == 0:
         con.print(Panel(f"[italic]{STORY[key]}[/]", title="[bold]story[/]", border_style="cyan", padding=(0, 2)))
     show_room(key, s)
@@ -973,7 +1073,18 @@ alias k=kubectl
 _esc_ps1() {{ {me} _ps1 2>/dev/null; }}
 PS1='\\[\\e[1;35m\\]❯\\[\\e[0m\\] '
 # after every command: quick automatic check; world finished -> back to the menu
-_esc_auto() {{ local rc=$?; {me} _autocheck; [ $? = 10 ] && {{ sleep 2; exit; }}; cd "$({me} _dir)" 2>/dev/null; return $rc; }}
+# pinned header: rows 1-{PIN_ROWS} stay, everything else scrolls below them (re-set every prompt: clear/less/k9s reset it)
+_esc_pin() {{
+  local rows=$(tput lines) cols=$(tput cols) r=0 c=1 hdr
+  (( rows < {PIN_MIN} )) && {{ printf '\\e[r'; return; }}
+  printf '\\e[6n' >/dev/tty; IFS='[;' read -rs -t 0.3 -d R _ r c </dev/tty   # ask the terminal: cursor row;col
+  hdr=$({me} _pin "$cols")
+  printf '\\e[{PIN_ROWS + 1};%dr\\e[1;1H' "$rows"
+  while IFS= read -r line; do printf '\\e[2K%s\n' "$line"; done <<< "$hdr"
+  (( r <= {PIN_ROWS} )) && r={PIN_ROWS + 1} c=1
+  printf '\\e[%d;%dH' "$r" "$c"
+}}
+_esc_auto() {{ local rc=$?; {me} _autocheck; [ $? = 10 ] && {{ sleep 2; exit; }}; cd "$({me} _dir)" 2>/dev/null; _esc_pin; return $rc; }}
 PROMPT_COMMAND=_esc_auto
 # typing something that is not a command = an answer attempt
 # runs in a SUBSHELL (bash rule): it checks the answer; _esc_auto (PROMPT_COMMAND) then moves on or exits
@@ -981,6 +1092,7 @@ command_not_found_handle() {{ {me} _typed "$@"; return 0; }}
 cd "{room_dir(key, w['room'])}"
 """)
     subprocess.call(["bash", "--rcfile", str(rc), "-i"], env=env)
+    sys.stdout.write("\033[r\033[2J\033[H"); sys.stdout.flush()   # undo the pinned header's scroll region
     s = load()
     s["active"] = None
     save(s)
@@ -1279,6 +1391,8 @@ def main(argv):
         show_room(key, s)
     elif cmd == "_dir" and key:
         print(room_dir(key, min(world_state(s, key)["room"], len(WORLDS[key]["rooms"]) - 1)))
+    elif cmd == "_pin" and key:
+        pin_header(key, s, int(argv[2]) if len(argv) > 2 else shutil.get_terminal_size().columns)
     elif cmd == "_ps1" and key:
         w = world_state(s, key)
         print(f"{key} {min(w['room'] + 1, len(WORLDS[key]['rooms']))}/{len(WORLDS[key]['rooms'])}", end="")

@@ -37,6 +37,15 @@ def check(world, room, answer=None, expect=True):
     print(f"  {'✔' if ok == expect else '✘'} {label}")
 
 
+def hint_part(world, part, label):
+    """Smart hints: the hint must be about the first part that is still broken."""
+    out = esc("_hint", world=world)
+    ok = f"part {part}/" in out
+    if not ok:
+        fails.append(f"{world} {label}: expected a hint for part {part}\n{out[-300:]}")
+    print(f"  {'✔' if ok else '✘'} {world} {label}: hint is for part {part}")
+
+
 def d(world, sub=""):
     return ROOM / world / sub
 
@@ -46,7 +55,10 @@ def bash():
     check("bash", 1, "definitely-wrong", expect=False)
     check("bash", 1, sh("find . -type f -name '.*' -exec cat {} + | grep KEY= | cut -d= -f2", d("bash", "1-haystack")))
     check("bash", 2, sh("awk '$9==500 {print $1}' access.log | sort | uniq -c | sort -rn | head -1 | awk '{print $2}'", d("bash", "2-noisy-log")))
-    sh("sed -i 's/\\r$//' open-door.sh && sed -i '1s|.*|#!/bin/bash|' open-door.sh && chmod +x open-door.sh", d("bash", "3-broken-script"))
+    hint_part("bash", 1, "room 3 nothing fixed")
+    sh("chmod +x open-door.sh && sed -i 's/\\r$//' open-door.sh", d("bash", "3-broken-script"))   # parts 3 and 1, not 2
+    hint_part("bash", 2, "room 3 parts 1+3 fixed")
+    sh("sed -i '1s|.*|#!/bin/bash|' open-door.sh", d("bash", "3-broken-script"))
     check("bash", 3)
     check("bash", 4, sh("jq -r '.floors[]|select(.floor==3).doors[]|select(.locked==false and .color==\"blue\").id' vault.json", d("bash", "4-json-vault")))
 
@@ -65,7 +77,10 @@ def linux():
     check("linux", 1, sh("sort -k3 -nr ps-aux.txt | head -1 | awk '{print $2}'", d("linux", "1-cpu-hog")))
     check("linux", 2, sh("du -s var/* | sort -n | tail -1 | awk '{print $2}' | xargs basename", d("linux", "2-disk-full")))
     check("linux", 3, expect=False)
-    sh("chmod +x run.sh && chmod u+r config.env", d("linux", "3-permission-denied"))
+    hint_part("linux", 1, "room 3 nothing fixed")
+    sh("chmod +x run.sh", d("linux", "3-permission-denied"))
+    hint_part("linux", 2, "room 3 run.sh fixed")
+    sh("chmod u+r config.env", d("linux", "3-permission-denied"))
     check("linux", 3)
     check("linux", 4, "ExecStart")
 

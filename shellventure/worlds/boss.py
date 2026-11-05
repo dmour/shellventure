@@ -60,6 +60,36 @@ def make(api):
                 return False, "Service 'boss' has no endpoints. The boss still stands."
             return api.ready(NS, "boss-app"), "deploy/boss-app is not Ready yet."
 
+    def jp(kind, name, path):
+        return kc("get", kind, name, "-n", NS, "-o", "jsonpath={" + path + "}", check=False)
+
+    C = ".spec.template.spec.containers[0]"
+    STEPS = {   # smart hints: one step per fault the boss picked
+        "image": {"name": "the image", "done": lambda d, w: not jp("deploy", "boss-app", C + ".image").endswith("-x"),
+                  "hints": ["`kubectl get pods -n boss`: ErrImagePull or ImagePullBackOff?",
+                            "Describe the pod: that image tag does not exist.",
+                            "`kubectl set image deploy/boss-app boss-app=nginx:1.27-alpine -n boss`"]},
+        "secret": {"name": "the secret", "done": lambda d, w: bool(jp("secret", "boss-secret", ".data.token")),
+                   "hints": ["CreateContainerConfigError? `kubectl describe pod -n boss`",
+                             "The pod wants key `token`. `kubectl get secret boss-secret -n boss -o yaml`",
+                             "`kubectl patch secret boss-secret -n boss -p '{\"stringData\":{\"token\":\"s3cret\"}}'`"]},
+        "probe": {"name": "the readiness probe", "done": lambda d, w: jp("deploy", "boss-app", C + ".readinessProbe.httpGet.port") == "80",
+                  "hints": ["Running but 0/1 Ready? Describe the pod: what fails?",
+                            "nginx listens on 80. Which port does the probe call?",
+                            "`kubectl edit deploy boss-app -n boss` and set the readinessProbe port to 80."]},
+        "selector": {"name": "the service", "done": lambda d, w: jp("svc", "boss", ".spec.selector.app") == "boss-app",
+                     "hints": ["`kubectl get endpoints boss -n boss`  Empty?",
+                               "Compare the service selector with the pod labels: `kubectl get pods -n boss --show-labels`",
+                               "`kubectl patch svc boss -n boss -p '{\"spec\":{\"selector\":{\"app\":\"boss-app\"}}}'`"]},
+        "quota": {"name": "no pods allowed", "done": lambda d, w: jp("quota", "lock", ".spec.hard.pods") != "0",
+                  "hints": ["No pods at all? `kubectl describe rs -n boss`",
+                            "Something limits the namespace: `kubectl get quota -n boss`", "`kubectl delete quota lock -n boss`"]},
+        "memory": {"name": "the memory limit", "done": lambda d, w: jp("deploy", "boss-app", C + ".resources.limits.memory") != "2Mi",
+                   "hints": ["The pod keeps restarting? Describe it: Last State reason?",
+                             "OOMKilled: the memory limit is far too small for nginx.",
+                             "`kubectl set resources deploy/boss-app -n boss --limits=memory=64Mi`"]},
+    }
+
     def bonus(took):
         if not is_thursday():
             return 10
@@ -73,5 +103,6 @@ def make(api):
              "task": "Make deploy/boss-app Ready and Service [bold]boss[/] send traffic to it.\nThen: [cyan]check[/]",
              "hints": ["Start wide: `kubectl get all,quota,secret -n boss` and `kubectl get events -n boss --sort-by=.lastTimestamp`",
                        "The 6 usual suspects: image tag, secret key, readiness probe port, service selector, quota, memory limit.",
-                       "Fix one, wait 10 seconds, look again. The next head shows only after the first falls."]},
+                       "Fix one, wait 10 seconds, look again. The next head shows only after the first falls."],
+             "steps": lambda w: [STEPS[f] for f in w["data"].get("faults", [])]},
         ]}}
