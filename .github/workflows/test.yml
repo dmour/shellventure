@@ -10,3 +10,12 @@ jobs:
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
       - run: pip install rich
       - run: python3 tests/solve_all.py
+
+  solve-all-rooms-as-root:   # phones (Termux + proot) play as root: root can read any file, so checks must use permission bits
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq git jq
+      - uses: actions/checkout@v4
+      - run: pip install rich
+      - run: python3 tests/solve_all.py

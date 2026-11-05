@@ -87,10 +87,10 @@ def make(api):
          "hints": ["`ls -l` shows the permission bits.", "run.sh needs x (execute), config.env needs r (read).",
                    "`chmod +x run.sh && chmod u+r config.env`"],
          "steps": [
-             {"name": "run.sh cannot run", "done": lambda d, w: os.access(d / "3-permission-denied" / "run.sh", os.X_OK),
+             {"name": "run.sh cannot run", "done": lambda d, w: bool((d / "3-permission-denied" / "run.sh").stat().st_mode & 0o100),
               "hints": ["`ls -l` shows the permission bits. Look at run.sh.", "To run as ./run.sh it needs x (execute).",
                         "`chmod +x run.sh`"]},
-             {"name": "config.env cannot be read", "done": lambda d, w: os.access(d / "3-permission-denied" / "config.env", os.R_OK),
+             {"name": "config.env cannot be read", "done": lambda d, w: bool((d / "3-permission-denied" / "config.env").stat().st_mode & 0o400),   # bits, not access(): root reads anything
               "hints": ["It runs now, but read the error: which file?", "`ls -l config.env`: ---------- means nobody can read it.",
                         "`chmod u+r config.env`"]},
          ]},

@@ -252,7 +252,7 @@ BASH = {
               "hints": ["Read line 1: `head -1 open-door.sh`. Does that program exist?",
                         "`ls -l /bin/bahs` vs `ls -l /bin/bash`",
                         "`sed -i '1s|.*|#!/bin/bash|' open-door.sh`"]},
-             {"name": "the execute bit", "done": lambda d, w: os.access(d / "3-broken-script" / "open-door.sh", os.X_OK),
+             {"name": "the execute bit", "done": lambda d, w: bool((d / "3-broken-script" / "open-door.sh").stat().st_mode & 0o100),
               "hints": ["`ls -l open-door.sh`: is there an x in the bits?",
                         "`./file` only runs files with the execute bit.", "`chmod +x open-door.sh`"]},
          ]},
