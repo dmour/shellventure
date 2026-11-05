@@ -51,7 +51,7 @@ work, and the door opens.
 | Git Temple | `git` |
 | Security Gate | `git`, `jq` |
 | Docker Docks, SQL Vault | `docker` (SQL Vault runs Postgres in a container: no local Postgres needed) |
-| Kube Castle, Boss Fight | `docker`, `kind`, `kubectl` |
+| Kube Castle, CKA Dojo, Boss Fight | `docker`, `kind`, `kubectl` |
 | Helm Harbor | `docker`, `kind`, `kubectl`, `helm` 3 |
 | It's Always DNS | `docker`, `kind`, `kubectl`, `openssl` |
 | Cloud Tower | `gcloud` (Google Cloud CLI). No Google account needed: it runs offline on its own config |
@@ -127,20 +127,23 @@ normal · hard; story mode: *First week as SRE*), **Quit**.
 |---|---|
 | your answer, e.g. `falcon-23` | tries it as the answer |
 | `check` / `check <answer>` | checks the room now |
-| `hint` | next hint (3 per room; each one lowers the room's XP) |
+| `hint` | a hint for the part you are stuck on (fixed parts show ✔; each hint lowers the room's XP) |
 | `room` | shows the room box again |
 | `map` | shows all worlds and your progress |
 | `exit` | leaves the room, progress saved |
 
 - **Fix-it rooms:** repair the system with normal commands. The game **checks after every command** and opens the door by itself.
 - **Answer rooms:** find the answer and **type it** (`10.4.2.1`, `falcon-23`, `ExecStart`...).
-- A thin **status bar** above your prompt shows the world, room, time and hints left.
+- The room's **name, task, time and hints left stay pinned at the top** while your output scrolls below
+  (small screens get a thin bar above the prompt instead).
+- **Smart hints:** rooms with several problems know what you already fixed. `hint` shows ✔ for the fixed parts
+  and only helps with the first part that is still broken.
 
 **Without the menu**
 
 ```bash
 sv play git         # go straight into a world (keys: bash git linux today cicd terraform observability
-                    #   security web k8s gcloud helm docker sql network boss)
+                    #   security web k8s gcloud helm cka docker sql network boss)
 sv daily            # today's 5-minute puzzle
 sv reset git        # rebuild a world with new puzzles
 sv map              # all worlds and your progress
@@ -170,6 +173,7 @@ Stuck for 10 minutes? Take one hint, not three.
 | Docker Docks | containers | `.dockerignore`, fat layers, published ports, healthchecks | docker |
 | SQL Vault | databases | `GROUP BY`/`HAVING`, indexes, lock hunting, joins, stuck sequences | docker |
 | It's Always DNS | networking | cross-namespace DNS, TLS SANs, key/cert match, port-forward, Host headers | kind, docker, kubectl, openssl |
+| CKA Dojo | kubernetes | one room per CKA exam area: nodeSelector, CPU requests, RBAC, PVC + StorageClass, NetworkPolicy, etcd snapshot | kind, docker, kubectl |
 | Boss Fight | kubernetes | 3 random faults at once, with a timer | kind, docker, kubectl |
 
 The Kubernetes worlds run on a **private local kind cluster** with its own kubeconfig: your real clusters are never touched.
@@ -190,7 +194,7 @@ The Kubernetes worlds run on a **private local kind cluster** with its own kubec
 `python3 tests/solve_all.py` builds every offline world in a throwaway home, tries wrong answers, then solves every
 room with real commands. GitHub Actions runs it on every push.
 
-`python3 tests/solve_heavy.py` does the same for the 7 worlds that need docker, kind or gcloud (about 5 minutes when the
+`python3 tests/solve_heavy.py` does the same for the 8 worlds that need docker, kind or gcloud (about 5 minutes when the
 images are pulled). It uses the game's own kind cluster and containers and deletes them at the end.
 
 ## Add your own world

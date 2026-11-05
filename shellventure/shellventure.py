@@ -81,7 +81,7 @@ def save(s):
 
 
 SKILL_OF = {"bash": "linux", "linux": "linux", "git": "git", "k8s": "kubernetes", "helm": "kubernetes",
-            "boss": "kubernetes", "incidents": "troubleshooting", "docker": "containers", "sql": "databases",
+            "boss": "kubernetes", "cka": "kubernetes", "incidents": "troubleshooting", "docker": "containers", "sql": "databases",
             "network": "networking", "gcloud": "cloud", "cicd": "cicd", "terraform": "iac",
             "observability": "observability", "today": "troubleshooting", "mybugs": "troubleshooting", "daily": "linux",
             "security": "security", "web": "web"}
@@ -670,7 +670,7 @@ def load_plugins():
         m = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(m)
         WORLDS.update(m.make(sys.modules[__name__]))
-    order = ["bash", "git", "linux", "today", "mybugs", "cicd", "terraform", "observability", "security", "web", "k8s", "gcloud", "helm", "docker", "sql", "network", "incidents", "boss"]
+    order = ["bash", "git", "linux", "today", "mybugs", "cicd", "terraform", "observability", "security", "web", "k8s", "gcloud", "helm", "cka", "docker", "sql", "network", "incidents", "boss"]
     for k in sorted(WORLDS, key=lambda k: order.index(k) if k in order else 50):
         WORLDS[k] = WORLDS.pop(k)
     only = os.environ.get("SHELLVENTURE_WORLDS")  # e.g. "bash,git" on the phone
@@ -1119,9 +1119,10 @@ def getkey():
 
 DIFF = {"easy": {"mult": 0.5, "hint_cost": 0, "max_hints": 3}, "normal": {"mult": 1.0, "hint_cost": 5, "max_hints": 3},
         "hard": {"mult": 1.5, "hint_cost": 5, "max_hints": 1}}
-CAMPAIGN = ["bash", "linux", "git", "cicd", "docker", "k8s", "helm", "terraform", "observability", "web",
+CAMPAIGN = ["bash", "linux", "git", "cicd", "docker", "k8s", "helm", "cka", "terraform", "observability", "web",
             "security", "sql", "network", "gcloud", "today", "boss"]
 STORY = {
+    "cka": "Week 3. Your lead says: pass the CKA by Friday. The practice cluster is already broken in six places.",
     "bash": "Monday 08:55. Your first day as an SRE. The laptop boots, the on-call phone buzzes: 'logs are full of junk, find the key'.",
     "linux": "Monday 14:00. A server is slow and the disk is almost full. Your team lead: 'you have ssh, go'.",
     "git": "Tuesday 09:30. Someone force-deleted a branch and a password leaked into history. Git remembers everything.",
@@ -1195,7 +1196,7 @@ cd "{st['dir']}"
 
 GROUPS = [("Foundations", ["bash", "linux", "git", "today"]),
           ("Delivery", ["cicd", "docker", "terraform"]),
-          ("Kubernetes", ["k8s", "helm", "boss"]),
+          ("Kubernetes", ["k8s", "helm", "cka", "boss"]),
           ("Operations", ["network", "sql", "web", "security", "observability", "gcloud", "incidents", "mybugs"])]
 
 

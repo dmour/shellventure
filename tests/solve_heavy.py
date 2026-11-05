@@ -241,7 +241,50 @@ def boss():
     check("boss", 1, tries=4)
 
 
-SOLVERS = {"docker": docker, "sql": sql, "gcloud": gcloud, "k8s": k8s, "helm": helm, "network": network, "boss": boss}
+def cka():
+    node = "shellventure-control-plane"
+    check("cka", 1, expect=False)
+    sh(f"{K} label node {node} disktype=ssd --overwrite", check=True)
+    rollout("cka1", "picky")
+    check("cka", 1, tries=3)
+    sh(f"{K} set resources deploy/greedy -n cka2 --requests=cpu=100m", check=True)
+    rollout("cka2", "greedy")
+    check("cka", 2, tries=3)
+    check("cka", 3, expect=False)
+    hint_part("cka", 1, "room 3 nothing fixed")
+    sh(f"{K} delete rolebinding legacy-access -n cka3", check=True)
+    hint_part("cka", 2, "room 3 binding removed")
+    sh(f"{K} create role pod-reader --verb=get,list,watch --resource=pods -n cka3 && "
+       f"{K} create rolebinding reporter-read --role=pod-reader --serviceaccount=cka3:reporter -n cka3", check=True)
+    check("cka", 3)
+    check("cka", 4, expect=False)
+    hint_part("cka", 1, "room 4 nothing fixed")
+    sh(f"{K} scale deploy db -n cka4 --replicas=0 && {K} get pvc data -n cka4 -o json | jq 'del(.metadata.resourceVersion,"
+       f".metadata.uid,.metadata.creationTimestamp,.metadata.annotations,.status) | .spec.storageClassName=\"standard\"' > /tmp/sv-pvc.json"
+       f" && {K} delete pvc data -n cka4 --timeout=60s && {K} apply -f /tmp/sv-pvc.json", check=True)
+    hint_part("cka", 2, "room 4 new claim, db scaled to 0")
+    sh(f"{K} scale deploy db -n cka4 --replicas=1", check=True)
+    rollout("cka4", "db", "120s")
+    check("cka", 4, tries=4)
+    check("cka", 5, expect=False)
+    sh(f"{K} delete networkpolicy default-deny -n cka5")       # plant: an open wall must NOT pass
+    hint_part("cka", 2, "room 5 wall removed (intruder gets in)")
+    check("cka", 5, expect=False)
+    sh(f"{K} apply -n cka5 -f - <<'EOF'\n"
+       "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: {name: default-deny}\n"
+       "spec: {podSelector: {}, policyTypes: [Ingress]}\n---\n"
+       "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: {name: allow-frontend}\n"
+       "spec:\n  podSelector: {matchLabels: {app: backend}}\n  policyTypes: [Ingress]\n"
+       "  ingress: [{from: [{podSelector: {matchLabels: {app: frontend}}}], ports: [{port: 80}]}]\nEOF", check=True)
+    check("cka", 5, tries=4)
+    check("cka", 6, expect=False)
+    sh(f"{K} exec -n kube-system etcd-{node} -- etcdctl --endpoints=https://127.0.0.1:2379 "
+       "--cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/server.crt "
+       "--key=/etc/kubernetes/pki/etcd/server.key snapshot save /var/lib/etcd/snapshot.db", check=True)
+    check("cka", 6)
+
+
+SOLVERS = {"docker": docker, "sql": sql, "gcloud": gcloud, "k8s": k8s, "helm": helm, "network": network, "cka": cka, "boss": boss}
 
 
 def main():
