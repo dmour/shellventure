@@ -762,7 +762,14 @@ def do_check(key, s, arg):
             return
         ok, msg = h(arg) == w["answers"][str(i + 1)], "Wrong answer. The door does not move."
     else:
-        ok, msg = r["check"](ROOT / W["dir"], w, arg)
+        try:
+            ok, msg = r["check"](ROOT / W["dir"], w, arg)
+        except OSError as e:   # e.g. Exec format error: bash runs a script without a real shebang, the kernel does not
+            ok, msg = False, (f"The system cannot start it: {e.strerror}.\nbash guessed and ran it anyway; "
+                              "a real program start (the kernel) is strict about line 1." if e.errno == 8
+                              else f"The system cannot start it: {e.strerror}.")
+        except Exception as e:
+            ok, msg = False, f"The check could not run: {e}"
     if not ok:
         con.print(Panel(f"[bold red]❌ Still locked.[/]\n{msg}", border_style="red"))
         return
@@ -1075,15 +1082,16 @@ PS1='\\[\\e[1;35m\\]❯\\[\\e[0m\\] '
 # after every command: quick automatic check; world finished -> back to the menu
 # pinned header: rows 1-{PIN_ROWS} stay, everything else scrolls below them (re-set every prompt: clear/less/k9s reset it)
 _esc_pin() {{
-  local rows=$(tput lines) cols=$(tput cols) r=0 c=1 hdr
+  local rows=$(tput lines) cols=$(tput cols) hdr
   (( rows < {PIN_MIN} )) && {{ printf '\\e[r'; return; }}
-  printf '\\e[6n' >/dev/tty; IFS='[;' read -rs -t 0.3 -d R _ r c </dev/tty   # ask the terminal: cursor row;col
   hdr=$({me} _pin "$cols")
-  printf '\\e[{PIN_ROWS + 1};%dr\\e[1;1H' "$rows"
-  while IFS= read -r line; do printf '\\e[2K%s\n' "$line"; done <<< "$hdr"
-  (( r <= {PIN_ROWS} )) && r={PIN_ROWS + 1} c=1
-  printf '\\e[%d;%dH' "$r" "$c"
+  printf '\\e7\\e[1;1H'                     # save the cursor, draw the header at the top
+  while IFS= read -r line; do printf '\\e[2K%s\\n' "$line"; done <<< "$hdr"
+  printf '\\e[{PIN_ROWS + 1};%dr\\e8' "$rows"  # rows below the header scroll; cursor back where it was
 }}
+# clear / Ctrl+L would put the prompt on row 1, inside the header: start below it instead
+clear() {{ command clear; printf '\\e[{PIN_ROWS + 1};1H'; }}
+bind -x '"\\C-l": clear' 2>/dev/null
 _esc_auto() {{ local rc=$?; {me} _autocheck; [ $? = 10 ] && {{ sleep 2; exit; }}; cd "$({me} _dir)" 2>/dev/null; _esc_pin; return $rc; }}
 PROMPT_COMMAND=_esc_auto
 # typing something that is not a command = an answer attempt
@@ -1378,7 +1386,8 @@ def main(argv):
         if w["room"] < len(W["rooms"]) and (W["rooms"][w["room"]].get("answer") or W["rooms"][w["room"]].get("typed")):
             do_check(key, s, " ".join(argv[2:]))
         else:
-            con.print(f"[grey50]{argv[2] if len(argv) > 2 else ''}: command not found[/]")
+            con.print(f"[grey50]{argv[2] if len(argv) > 2 else ''}: command not found.[/] [yellow]This room has no answer to type:[/] "
+                      "make the system work, I check after every command (or type [cyan]check[/]).")
         return 10 if world_state(load(), key)["room"] >= len(W["rooms"]) else 0
     elif cmd == "_dailydone":          # exit 0 = today's daily is solved
         st = load().get("daily", {})
