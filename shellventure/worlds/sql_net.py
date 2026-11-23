@@ -199,7 +199,7 @@ def make(api):
             return False, "That name does not reach vault from net1."
         return True, ""
 
-    NET = {"title": "It's Always DNS", "needs": ["kind", "docker", "kubectl", "openssl"], "dir": "network", "setup": net_setup, "kind": True, "rooms": [
+    NET = {"title": "It's Always DNS", "needs": ["kind", "docker", "kubectl", "openssl"], "dir": "network", "setup": net_setup, "kind": True, "namespaces": ["net1", "secrets", "net4", "net5"], "rooms": [
         {"name": "Lost in DNS", "check": dns_check, "typed": True,
          "story": "From pod [bold]client[/] (ns net1): `wget -qO- vault` says bad address. But vault is running.",
          "task": "Find a hostname that reaches the vault Service [bold]from net1[/].\n"

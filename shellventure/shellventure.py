@@ -5,6 +5,7 @@
   shellventure play <world>    enter a world (bash, git, k8s, gcloud) in a game shell
   shellventure reset <world>   rebuild a world with new codes
   shellventure stop            delete the local kind cluster used by the k8s world
+  shellventure tidy            free memory: stop the cluster and containers no world in progress needs (keeps progress)
 
 Inside the game shell: room, check [code], hint, map, exit.
 Everything runs under ~/shellventure-lab. The k8s world uses its own kind cluster and
@@ -504,7 +505,8 @@ def gate_extra(ns):
 
 
 K8S = {
-    "title": "Kube Castle", "needs": ["kind", "docker", "kubectl"], "dir": "k8s", "setup": k8s_setup, "kind": True, "rooms": [
+    "title": "Kube Castle", "needs": ["kind", "docker", "kubectl"], "dir": "k8s", "setup": k8s_setup, "kind": True,
+    "namespaces": [ns for ns, _ in K8S_ROOMS.values()], "rooms": [
         {"name": "The Locked Door", "ns": "room1-door", "check": k8s_check("1", "door"),
          "story": "The door pod will not even start.",
          "task": "Namespace [bold]room1-door[/]. Make deploy/door Ready.\nThen: [cyan]check[/]",
@@ -746,6 +748,50 @@ def door_animation():
     con.print(Align.center(Text(DOOR[-1], style="bold green")))
 
 
+GAME_CONTAINERS = {"docker": ["shellventure-web", "shellventure-health"], "sql": ["shellventure-pg"]}
+GAME_IMAGES = {"docker": ["shellventure/door:1", "shellventure/slim:1", "shellventure/web:1", "shellventure/health:1"]}
+
+
+def in_progress(s, key):
+    w = s["worlds"].get(key, {})
+    return bool(w.get("built")) and w.get("room", 0) < len(WORLDS[key]["rooms"])
+
+
+def tidy_up(s, finished=None):
+    """Free the laptop after a world (or on Quit): the finished world's containers / namespaces, and the whole
+    kind cluster when no Kubernetes world is still in progress. Progress, best times and XP are kept."""
+    if finished in GAME_CONTAINERS:
+        sh(["docker", "rm", "-f", *GAME_CONTAINERS[finished]], check=False)
+        if finished in GAME_IMAGES:
+            sh(["docker", "rmi", "-f", *GAME_IMAGES[finished]], check=False)
+        con.print(f"[grey50]cleaned: {WORLDS[finished]['title']} containers[/]")
+    if not KUBECONFIG.exists() or not shutil.which("kind") or KIND_NAME not in sh(["kind", "get", "clusters"], check=False).stdout.split():
+        return   # only a cluster THIS game home made (tests run in a throwaway home and must not touch yours)
+    kind_worlds = [k for k, W in WORLDS.items() if W.get("kind")]
+    if not any(in_progress(s, k) for k in kind_worlds):
+        with con.status("[cyan]Stopping the practice cluster (no Kubernetes world needs it)...", spinner="dots12"):
+            sh(["kind", "delete", "cluster", "--name", KIND_NAME], check=False)
+        KUBECONFIG.unlink(missing_ok=True)
+        for k in kind_worlds:
+            if k in s["worlds"]:
+                s["worlds"][k]["built"] = False   # a replay rebuilds it fresh
+        save(s)
+        con.print("[grey50]cleaned: practice cluster stopped (frees ~700 MB). It comes back in ~1 min when you play a Kubernetes world.[/]")
+    elif finished and WORLDS[finished].get("namespaces"):
+        for ns in WORLDS[finished]["namespaces"]:
+            kc("delete", "ns", ns, "--ignore-not-found", "--wait=false", check=False)
+        con.print(f"[grey50]cleaned: {WORLDS[finished]['title']} namespaces[/]")
+
+
+def learn_card(r, w):
+    """After a door opens: the key command(s) of the room, so the solve turns into something you remember."""
+    steps = room_steps(r, w)
+    pick_ = lambda hs: next((x for x in reversed(hs) if "`" in x), hs[-1])
+    items = [f"{st['name']}: {pick_(st['hints'])}" for st in steps] if steps else [r.get("learn") or pick_(r["hints"])]
+    body = "\n".join(re.sub(r"`([^`]+)`", r"[bold cyan]\1[/]", escape_markup(x)) for x in items)
+    con.print(Panel(body, title="[bold]what you learned[/]", border_style="cyan", padding=(0, 1)))
+
+
 def do_check(key, s, arg):
     W, w = WORLDS[key], world_state(s, key)
     i = w["room"]
@@ -782,6 +828,7 @@ def do_check(key, s, arg):
     door_animation()
     con.print(Align.center(f"[bold green]{r['name']} OPENED![/]  +{pts} XP"))
     award(pts, f"escape {key}: {r['name']}", SKILL_OF.get(key, W.get("skill")))
+    learn_card(r, w)
     if w["room"] >= len(W["rooms"]):
         took = time.time() - w["start"]
         w["best"] = min(w["best"] or took, took)
@@ -795,6 +842,7 @@ def do_check(key, s, arg):
             f"[bold green]{BANNER}[/]\n\n[bold]You escaped {W['title']} in {fmt_time(took)}![/]\n"
             f"World bonus +{bonus} XP")), border_style="green", box=box.DOUBLE))
         award(bonus, f"escaped {W['title']}", SKILL_OF.get(key, W.get("skill")))
+        tidy_up(load(), key)
     else:
         con.print()
         show_room(key, s)
@@ -1334,7 +1382,7 @@ def menu():
                  ("Quit", "", "quit")]
         v = pick(None, rows, header=header)
         if v in (None, "quit"):
-            con.clear(); return 0
+            con.clear(); tidy_up(load()); return 0
         if v == "continue":
             play_world(last)
         elif v == "daily":
@@ -1360,6 +1408,11 @@ def main(argv):
     elif cmd == "reset" and len(argv) > 2 and argv[2] in WORLDS:
         build(argv[2], s)
         con.print(f"[green]{WORLDS[argv[2]]['title']} rebuilt with new puzzles.[/] Play: shellventure play {argv[2]}")
+    elif cmd == "tidy":   # free memory now: containers of finished worlds, the cluster if no k8s world needs it
+        tidy_up(s, None)
+        for k in GAME_CONTAINERS:
+            if not in_progress(s, k) and k in s["worlds"]:
+                tidy_up(s, k)
     elif cmd == "stop":
         sh(["kind", "delete", "cluster", "--name", KIND_NAME], check=False)
         sh(["docker", "rm", "-f", "shellventure-pg", "shellventure-web", "shellventure-health"], check=False)

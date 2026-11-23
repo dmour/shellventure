@@ -96,7 +96,7 @@ def make(api):
         return 50 + (25 if took < 15 * 60 else 0)
 
     return {"boss": {
-        "title": "Boss Fight", "needs": ["kind", "docker", "kubectl"], "dir": "boss", "setup": setup, "kind": True, "bonus": bonus, "rooms": [
+        "title": "Boss Fight", "needs": ["kind", "docker", "kubectl"], "dir": "boss", "setup": setup, "kind": True, "namespaces": [NS], "bonus": bonus, "rooms": [
             {"name": "The Three-Headed Deploy", "check": check,
              "story": "Namespace [bold]boss[/]. [bold]Three[/] things are broken at once. Each fix shows the next head.\n"
                       "Thursday = 50 XP (+25 under 15 min). Other days = practice (10 XP). New faults each reset.",

@@ -136,6 +136,9 @@ normal · hard; story mode: *First week as SRE*), **Quit**.
 - **Answer rooms:** find the answer and **type it** (`10.4.2.1`, `falcon-23`, `ExecStart`...).
 - The room's **name, task, time and hints left stay pinned at the top** while your output scrolls below
   (small screens get a thin bar above the prompt instead).
+- After each door: a **"what you learned"** card with the room's key command.
+- **Clean laptop:** finishing a world removes its containers/namespaces, and the kind cluster stops when no
+  Kubernetes world is in progress (also on Quit). It comes back in ~1 min when you play one again.
 - **Smart hints:** rooms with several problems know what you already fixed. `hint` shows ✔ for the fixed parts
   and only helps with the first part that is still broken.
 
@@ -147,6 +150,7 @@ sv play git         # go straight into a world (keys: bash git linux today cicd 
 sv daily            # today's 5-minute puzzle
 sv reset git        # rebuild a world with new puzzles
 sv map              # all worlds and your progress
+sv tidy             # free memory now: stops the cluster/containers no world in progress needs (keeps progress)
 sv stop             # delete the local kind cluster and game containers
 ```
 

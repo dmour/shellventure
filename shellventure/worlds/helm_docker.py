@@ -129,7 +129,7 @@ def make(api):
             return False, f"Release 'migrator' status: {rel and rel['status']}."
         return api.ready("helm4", "migrator"), "deploy/migrator is not Ready yet."
 
-    HELM = {"title": "Helm Harbor", "needs": ["kind", "docker", "kubectl", "helm"], "dir": "helm", "setup": helm_setup, "kind": True, "rooms": [
+    HELM = {"title": "Helm Harbor", "needs": ["kind", "docker", "kubectl", "helm"], "dir": "helm", "setup": helm_setup, "kind": True, "namespaces": ["helm1", "helm2", "helm3", "helm4"], "rooms": [
         {"name": "The Template Trap", "dir": "1-template-trap", "check": h_door,
          "story": "Release [bold]door[/] installed fine. But its pod never starts.",
          "task": "Namespace [bold]helm1[/]. Fix the chart in ./door and [bold]helm upgrade[/] it until deploy/door is Ready.\nThen: [cyan]check[/]",

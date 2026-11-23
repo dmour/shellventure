@@ -108,7 +108,7 @@ def make(api):
         return snapshot_ok(), "No valid snapshot at /var/lib/etcd/snapshot.db yet."
 
     return {"cka": {
-        "title": "CKA Dojo", "needs": ["kind", "docker", "kubectl"], "dir": "cka", "setup": setup, "kind": True, "rooms": [
+        "title": "CKA Dojo", "needs": ["kind", "docker", "kubectl"], "dir": "cka", "setup": setup, "kind": True, "namespaces": ["cka1", "cka2", "cka3", "cka4", "cka5"], "rooms": [
             {"name": "The Picky Pod", "ns": "cka1", "check": chk_picky,
              "story": "deploy/picky is [bold]Pending[/] forever. The scheduler says no node fits.",
              "task": "Namespace [bold]cka1[/]. Make deploy/picky Ready.\nThen: [cyan]check[/]",
