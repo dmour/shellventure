@@ -5,6 +5,7 @@
   shellventure play <world>    enter a world (bash, git, k8s, gcloud) in a game shell
   shellventure reset <world>   rebuild a world with new codes
   shellventure stop            delete the local kind cluster used by the k8s world
+  shellventure practice        rooms to redo (you needed all hints or help); then: practice play <n>
   shellventure tidy            free memory: stop the cluster and containers no world in progress needs (keeps progress)
 
 Inside the game shell: room, check [code], hint, map, exit.
@@ -838,6 +839,35 @@ def tidy_up(s, finished=None):
         con.print(f"[grey50]cleaned: {WORLDS[finished]['title']} namespaces[/]")
 
 
+PRACTICE_DAYS = 2   # a room you needed help with comes back after this many days
+
+
+def practice_add(s, key, i, why):
+    q = s.setdefault("practice", [])
+    if not any(p["world"] == key and p["room"] == i for p in q):
+        q.append({"world": key, "room": i, "name": WORLDS[key]["rooms"][i]["name"], "why": why,
+                  "due": time.strftime("%Y-%m-%d", time.localtime(time.time() + PRACTICE_DAYS * 86400))})
+
+
+def practice_due(s):
+    today = time.strftime("%Y-%m-%d")
+    return [p for p in s.get("practice", []) if p["due"] <= today and p["world"] in WORLDS]
+
+
+def practice_start(s, p):
+    """Rebuild the world with fresh puzzles and jump straight to the room to redo."""
+    key, i = p["world"], p["room"]
+    if in_progress(s, key):
+        con.print(f"[yellow]Finish {WORLDS[key]['title']} first (it is in progress), then practice this room.[/]")
+        return False
+    escapes = world_state(s, key).get("escapes", 0)
+    build(key, s)
+    w = world_state(s, key)
+    w.update(room=i, practice=True, start=time.time(), escapes=escapes)
+    save(s)
+    return True
+
+
 def learn_card(r, w):
     """After a door opens: the key command(s) of the room, so the solve turns into something you remember."""
     steps = room_steps(r, w)
@@ -884,6 +914,24 @@ def do_check(key, s, arg):
     con.print(Align.center(f"[bold green]{r['name']} OPENED![/]  +{pts} XP"))
     award(pts, f"escape {key}: {r['name']}", SKILL_OF.get(key, W.get("skill")))
     learn_card(r, w)
+    all_hints = used >= min(dif["max_hints"], len(r["hints"]))
+    if w.get("practice"):   # a practice run is one room only
+        s["practice"] = [p for p in s.get("practice", []) if not (p["world"] == key and p["room"] == i)]
+        if all_hints:
+            practice_add(s, key, i, "used all hints again")
+        w["practice"] = False
+        w["room"] = len(W["rooms"]) if w.get("escapes") else 0
+        w["built"] = w["built"] and bool(w.get("escapes"))
+        save(s)
+        left = len(s.get("practice", []))
+        con.print(Panel(f"[bold green]Practice done:[/] {r['name']}" + (" comes back in 2 days (all hints used)." if all_hints else
+                        " is off your queue.") + f"  {left} room{'s' if left != 1 else ''} left in your queue.", border_style="green"))
+        tidy_up(load(), key)
+        return
+    if all_hints:
+        practice_add(s, key, i, "used all hints")
+        save(s)
+        con.print(f"[grey50]You used all hints here: this room comes back in your practice queue in {PRACTICE_DAYS} days.[/]")
     if w["room"] >= len(W["rooms"]):
         took = time.time() - w["start"]
         w["best"] = min(w["best"] or took, took)
@@ -1434,6 +1482,9 @@ def menu():
             w = s["worlds"].get(last, {}); n = len(WORLDS[last]["rooms"])
             if w.get("room", 0) < n:
                 rows.append(("Continue", f"{WORLDS[last]['title']} · room {w.get('room', 0) + 1}/{n}", "continue"))
+        due = practice_due(s)
+        if due:
+            rows.append(("Practice", f"{len(due)} room{'s' if len(due) != 1 else ''} to redo", "practice"))
         rows += [("Daily", "[green]done today[/]" if dsolved else "5 min · +10 XP", "daily"),
                  ("Worlds", f"{escaped} of {len(WORLDS)} escaped", "worlds"),
                  ("Profile", "", "profile"),
@@ -1446,6 +1497,13 @@ def menu():
             play_world(last)
         elif v == "daily":
             daily_shell(load())
+        elif v == "practice":
+            st = load()
+            items = practice_due(st)
+            c = pick("Practice: redo these rooms", [(f"{WORLDS[p['world']]['title']}: {p['name']}", p["why"], n)
+                                                     for n, p in enumerate(items)])
+            if c is not None and practice_start(st, items[c]):
+                play(items[c]["world"], load())
         elif v == "worlds":
             worlds_menu()
         elif v == "profile":
@@ -1467,6 +1525,19 @@ def main(argv):
     elif cmd == "reset" and len(argv) > 2 and argv[2] in WORLDS:
         build(argv[2], s)
         con.print(f"[green]{WORLDS[argv[2]]['title']} rebuilt with new puzzles.[/] Play: shellventure play {argv[2]}")
+    elif cmd == "practice":   # list | add <world> <room#> [why] | play <n>
+        sub = argv[2] if len(argv) > 2 else "list"
+        if sub == "add" and len(argv) > 4 and argv[3] in WORLDS:
+            practice_add(s, argv[3], int(argv[4]) - 1, " ".join(argv[5:]) or "added by hand"); save(s)
+        if sub == "play" and len(argv) > 3:
+            q = s.get("practice", [])
+            n = int(argv[3]) - 1
+            if 0 <= n < len(q) and practice_start(s, q[n]):
+                play(q[n]["world"], load())
+            return 0
+        for n, p in enumerate(load().get("practice", []), 1):
+            con.print(f"  {n}. {WORLDS[p['world']]['title'] if p['world'] in WORLDS else p['world']}: {p['name']}  "
+                      f"[grey50]({p['why']}, due {p['due']})[/]")
     elif cmd == "tidy":   # free memory now: containers of finished worlds, the cluster if no k8s world needs it
         tidy_up(s, None)
         for k in GAME_CONTAINERS:

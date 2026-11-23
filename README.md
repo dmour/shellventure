@@ -137,6 +137,8 @@ normal · hard; story mode: *First week as SRE*), **Quit**.
 - The room's **name, task, time and hints left stay pinned at the top** while your output scrolls below
   (small screens get a thin bar above the prompt instead).
 - After each door: a **"what you learned"** card with the room's key command.
+- **Practice queue:** a room where you used all hints comes back 2 days later as a **Practice** line in the menu
+  (fresh puzzles, just that one room). `sv practice` lists it; `sv practice add <world> <room#>` adds one by hand.
 - **Auto-repair:** delete something the puzzle needs (a file, or a Kubernetes object like the NetworkPolicy
   the room is about) and the game warns you and puts the original back. The first restore in a room is free;
   each later one counts as a hint. Things you are meant to delete (a quota, a bad RoleBinding) are left alone.
@@ -153,6 +155,7 @@ sv play git         # go straight into a world (keys: bash git linux today cicd 
 sv daily            # today's 5-minute puzzle
 sv reset git        # rebuild a world with new puzzles
 sv map              # all worlds and your progress
+sv practice         # rooms to redo; sv practice play <n> to play one
 sv tidy             # free memory now: stops the cluster/containers no world in progress needs (keeps progress)
 sv stop             # delete the local kind cluster and game containers
 ```

@@ -25,7 +25,7 @@ def sh(cmd, cwd):
 
 def esc(*args, world=None):
     env = dict(ENV, **({"SHELLVENTURE_WORLD": world} if world else {}))
-    return subprocess.run([sys.executable, str(ENGINE), *args], capture_output=True, text=True, env=env).stdout
+    return subprocess.run([sys.executable, str(ENGINE), *args], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL).stdout
 
 
 def check(world, room, answer=None, expect=True):
@@ -78,6 +78,25 @@ def bash():
     sh("sed -i '1s|.*|#!/bin/bash|' open-door.sh", d("bash", "3-broken-script"))
     check("bash", 3)
     check("bash", 4, sh("jq -r '.floors[]|select(.floor==3).doors[]|select(.locked==false and .color==\"blue\").id' vault.json", d("bash", "4-json-vault")))
+    practice_run()
+
+
+def practice_run():
+    """Practice queue: add a room, replay it with fresh puzzles, solve it, it leaves the queue; the world stays escaped."""
+    state = lambda: json.loads((ROOM / ".state.json").read_text())
+    esc("practice", "add", "bash", "1", "test")
+    q = state().get("practice", [])
+    ok1 = len(q) == 1 and q[0]["world"] == "bash" and q[0]["room"] == 0
+    esc("practice", "play", "1")                    # no keyboard: the game shell exits at once
+    w = state()["worlds"]["bash"]
+    ok2 = w.get("practice") is True and w["room"] == 0
+    check("bash", "1 (practice)", sh("find . -type f -name '.*' -exec cat {} + | grep KEY= | cut -d= -f2", d("bash", "1-haystack")))
+    st = state(); w = st["worlds"]["bash"]
+    ok3 = not st.get("practice") and w["room"] == 4 and not w.get("practice") and w.get("escapes", 0) >= 1
+    for ok, label in ((ok1, "added to the queue"), (ok2, "practice starts at that room"), (ok3, "solved: off the queue, world still escaped")):
+        if not ok:
+            fails.append(f"practice: {label} failed\n{json.dumps(state().get('practice'))} {json.dumps({k: state()['worlds']['bash'].get(k) for k in ('room', 'practice', 'escapes')})}")
+        print(f"  {'✔' if ok else '✘'} practice: {label}")
 
 
 def git():
