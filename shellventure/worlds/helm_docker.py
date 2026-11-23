@@ -244,7 +244,7 @@ def make(api):
         return st == "healthy", f"shellventure-health is {st}."
 
     DOCKER = {"title": "Docker Docks", "needs": ["docker"], "dir": "docker", "setup": docker_setup, "rooms": [
-        {"name": "The Broken Build", "dir": "1-broken-build", "check": d_door,
+        {"name": "The Broken Build", "dir": "1-broken-build", "check": d_door, "may_delete": [".dockerignore"],
          "story": "The door image will not build. There are [bold]two[/] reasons.",
          "task": "Build [bold]shellventure/door:1[/] from this folder so that\n`docker run --rm shellventure/door:1` prints the code. Then: [cyan]check[/]",
          "hints": ["`docker build -t shellventure/door:1 .`  Read the error.",

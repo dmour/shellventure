@@ -69,6 +69,7 @@ def make(api):
                 {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "default-deny", "namespace": "cka5"},
                  "spec": {"podSelector": {}, "policyTypes": ["Ingress"]}},
             ]
+            api.remember(w, items)
             kc("apply", "-f", "-", stdin=json.dumps({"apiVersion": "v1", "kind": "List", "items": items}))
             (d / "README.txt").parent.mkdir(parents=True, exist_ok=True)
             (d / "README.txt").write_text("CKA Dojo: namespaces cka1..cka5, and etcd in kube-system.\n")
@@ -109,19 +110,19 @@ def make(api):
 
     return {"cka": {
         "title": "CKA Dojo", "needs": ["kind", "docker", "kubectl"], "dir": "cka", "setup": setup, "kind": True, "namespaces": ["cka1", "cka2", "cka3", "cka4", "cka5"], "rooms": [
-            {"name": "The Picky Pod", "ns": "cka1", "check": chk_picky,
+            {"name": "The Picky Pod", "ns": "cka1", "check": chk_picky, "keep": ["Deployment/cka1/picky"],
              "story": "deploy/picky is [bold]Pending[/] forever. The scheduler says no node fits.",
              "task": "Namespace [bold]cka1[/]. Make deploy/picky Ready.\nThen: [cyan]check[/]",
              "hints": ["`kubectl describe pod -n cka1` and read the Events at the bottom.",
                        "It wants a node with label disktype=ssd: `kubectl get nodes --show-labels`",
                        "`kubectl label node <node> disktype=ssd` (or remove the nodeSelector from the deploy)."]},
-            {"name": "The Greedy Pod", "ns": "cka2", "check": chk_greedy,
+            {"name": "The Greedy Pod", "ns": "cka2", "check": chk_greedy, "keep": ["Deployment/cka2/greedy"],
              "story": "deploy/greedy asks for more CPU than the whole node has.",
              "task": "Namespace [bold]cka2[/]. Make deploy/greedy Ready. Keep a CPU request.\nThen: [cyan]check[/]",
              "hints": ["Events say `Insufficient cpu`. How much does it ask for?",
                        "`kubectl get deploy greedy -n cka2 -o jsonpath='{..resources}'`",
                        "`kubectl set resources deploy/greedy -n cka2 --requests=cpu=100m`"]},
-            {"name": "Who Can?", "ns": "cka3", "check": chk_rbac,
+            {"name": "Who Can?", "ns": "cka3", "check": chk_rbac, "keep": ["ServiceAccount/cka3/reporter"],
              "story": "ServiceAccount [bold]reporter[/] should only READ pods. Today it can delete them.",
              "task": "Namespace [bold]cka3[/]. reporter must [bold]list[/] pods but [bold]not delete[/] them.\n"
                      "Test: kubectl auth can-i delete pods -n cka3 --as system:serviceaccount:cka3:reporter\nThen: [cyan]check[/]",
@@ -139,7 +140,7 @@ def make(api):
                             "`kubectl create role pod-reader --verb=get,list,watch --resource=pods -n cka3` then "
                             "`kubectl create rolebinding reporter-read --role=pod-reader --serviceaccount=cka3:reporter -n cka3`"]},
              ]},
-            {"name": "The Unbound Claim", "ns": "cka4", "check": chk_pvc,
+            {"name": "The Unbound Claim", "ns": "cka4", "check": chk_pvc, "keep": ["Deployment/cka4/db"],
              "story": "deploy/db waits for its disk. PVC [bold]data[/] stays Pending.",
              "task": "Namespace [bold]cka4[/]. Get PVC data Bound and deploy/db Ready.\nThen: [cyan]check[/]",
              "hints": ["`kubectl describe pvc data -n cka4`  Which StorageClass does it want?",
@@ -160,7 +161,7 @@ def make(api):
                             "Bring it back and let it claim the new PVC.",
                             "`kubectl scale deploy db -n cka4 --replicas=1`"]},
              ]},
-            {"name": "The Wall", "ns": "cka5", "check": chk_wall,
+            {"name": "The Wall", "ns": "cka5", "check": chk_wall, "keep": ["NetworkPolicy/cka5/default-deny", "Deployment/cka5/backend", "Service/cka5/backend", "Deployment/cka5/frontend", "Deployment/cka5/intruder"],
              "story": "A [bold]default-deny[/] NetworkPolicy blocks everything. Now even frontend cannot reach backend.",
              "task": "Namespace [bold]cka5[/]. frontend must reach http://backend, intruder must not.\n"
                      "Keep default-deny. Test: kubectl exec -n cka5 deploy/frontend -- wget -qO- -T 3 backend\nThen: [cyan]check[/]",

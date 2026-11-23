@@ -442,7 +442,9 @@ def k8s_setup(d, w):
     for rid, (ns, make) in K8S_ROOMS.items():
         kc("delete", "ns", ns, "--ignore-not-found", "--wait=true")
         kc("create", "ns", ns)
-        kc("apply", "-f", "-", stdin=json.dumps({"apiVersion": "v1", "kind": "List", "items": make(ns)}))
+        items = make(ns)
+        remember(w, items)
+        kc("apply", "-f", "-", stdin=json.dumps({"apiVersion": "v1", "kind": "List", "items": items}))
     (d / "README.txt").write_text("Your cluster: kind-shellventure. KUBECONFIG is already set in the game shell.\n")
 
 
@@ -507,31 +509,31 @@ def gate_extra(ns):
 K8S = {
     "title": "Kube Castle", "needs": ["kind", "docker", "kubectl"], "dir": "k8s", "setup": k8s_setup, "kind": True,
     "namespaces": [ns for ns, _ in K8S_ROOMS.values()], "rooms": [
-        {"name": "The Locked Door", "ns": "room1-door", "check": k8s_check("1", "door"),
+        {"name": "The Locked Door", "ns": "room1-door", "check": k8s_check("1", "door"), "keep": ["Deployment/room1-door/door"],
          "story": "The door pod will not even start.",
          "task": "Namespace [bold]room1-door[/]. Make deploy/door Ready.\nThen: [cyan]check[/]",
          "hints": ["`kubectl get pods -n room1-door` then describe the pod.",
                    "Read the Events. Is the image name right?",
                    "`kubectl set image deploy/door door=busybox:1.36 -n room1-door`"]},
-        {"name": "The Silent Guard", "ns": "room2-guard", "check": k8s_check("2", "guard"),
+        {"name": "The Silent Guard", "ns": "room2-guard", "check": k8s_check("2", "guard"), "keep": ["Secret/room2-guard/guard-secret", "Deployment/room2-guard/guard"],
          "story": "The guard needs a password to wake up. Someone gave him the wrong paper.",
          "task": "Namespace [bold]room2-guard[/]. Make deploy/guard Ready.\nThen: [cyan]check[/]",
          "hints": ["Status says CreateContainerConfigError. Describe the pod.",
                    "Compare the key the pod wants with the keys in the secret: `kubectl get secret guard-secret -o yaml`",
                    "Either add key `password` to the secret, or change the deploy to use key `passwd`."]},
-        {"name": "The Dark Corridor", "ns": "room3-corridor", "check": k8s_check("3", "lantern", corridor_extra),
+        {"name": "The Dark Corridor", "ns": "room3-corridor", "check": k8s_check("3", "lantern", corridor_extra), "keep": ["Deployment/room3-corridor/lantern", "Service/room3-corridor/lamp"],
          "story": "The lantern is burning, but the [bold]lamp[/] service shows nothing.",
          "task": "Namespace [bold]room3-corridor[/]. Make service [bold]lamp[/] send traffic to the lantern pods.\nThen: [cyan]check[/]",
          "hints": ["`kubectl get endpoints lamp -n room3-corridor`  Empty? Why?",
                    "Compare the service selector with the pod labels: `kubectl get pods --show-labels`",
                    "`kubectl patch svc lamp -n room3-corridor -p '{\"spec\":{\"selector\":{\"app\":\"lantern\"}}}'`"]},
-        {"name": "The Hungry Monster", "ns": "room4-monster", "check": k8s_check("4", "monster", monster_extra),
+        {"name": "The Hungry Monster", "ns": "room4-monster", "check": k8s_check("4", "monster", monster_extra), "keep": ["Deployment/room4-monster/monster"],
          "story": "The monster eats 30 MB for breakfast. It keeps dying.",
          "task": "Namespace [bold]room4-monster[/]. Keep its command. Make it live.\nThen: [cyan]check[/]",
          "hints": ["Describe the pod. Look at Last State: Reason.",
                    "OOMKilled = memory limit too small for what it eats.",
                    "`kubectl set resources deploy/monster -n room4-monster --limits=memory=128Mi --requests=memory=64Mi`"]},
-        {"name": "The Final Gate", "ns": "room5-gate", "check": k8s_check("5", "gate", gate_extra),
+        {"name": "The Final Gate", "ns": "room5-gate", "check": k8s_check("5", "gate", gate_extra), "keep": ["Deployment/room5-gate/gate"],
          "story": "The last gate. [bold]Two locks[/]. No pods at all.",
          "task": "Namespace [bold]room5-gate[/]. Make deploy/gate Ready. Keep a readiness probe.\nThen: [cyan]check[/]",
          "hints": ["No pods? Look at the ReplicaSet events: `kubectl describe rs -n room5-gate`",
@@ -700,14 +702,67 @@ def build(key, s):
     if not W.get("kind") and d.exists():
         shutil.rmtree(d)
     d.mkdir(parents=True, exist_ok=True)
-    w.update(built=False, room=0, hints={}, solved=[], answers={}, data={}, start=None)
+    w.update(built=False, room=0, hints={}, solved=[], answers={}, data={}, start=None, restores={})
     if W.get("kind"):
         W["setup"](d, w)
     else:
         with con.status(f"[cyan]Building {W['title']}...", spinner="dots12"):
             W["setup"](d, w)
+    orig = ROOT / ".originals" / key   # starting files, so a deleted puzzle file can be put back
+    shutil.rmtree(orig, ignore_errors=True)
+    try:
+        shutil.copytree(d, orig, symlinks=True, ignore=shutil.ignore_patterns(".git"))
+    except shutil.Error:
+        pass   # unreadable puzzle files (e.g. mode 000 on purpose) are skipped; everything else is copied
     w["built"] = True
     save(s)
+
+
+def remember(w, items):
+    """Keep the starting manifest of Kubernetes objects a room needs, so a deleted one can be put back."""
+    store = w["data"].setdefault("keep", {})
+    for it in items:
+        md = it["metadata"]
+        store[f"{it['kind']}/{md.get('namespace', '')}/{md['name']}"] = it
+
+
+def repair(key, s):
+    """Before every prompt: a required piece of the current room that was deleted is restored, with a warning.
+    The first restore in a room is free; each later one counts as a hint (his rule, 2026-11-23)."""
+    W, w = WORLDS[key], world_state(s, key)
+    i = w["room"]
+    if not w.get("built") or i >= len(W["rooms"]):
+        return
+    r, back = W["rooms"][i], []
+    orig = ROOT / ".originals" / key / room_dir(key, i).relative_to(ROOT / W["dir"])
+    if orig.is_dir() and not (room_dir(key, i) / ".git").exists():   # git rooms: checkout/bisect remove files on purpose
+        for f in orig.rglob("*"):
+            rel = f.relative_to(orig)
+            dst = room_dir(key, i) / rel
+            if f.is_file() and not dst.exists() and not dst.is_symlink() and rel.as_posix() not in r.get("may_delete", []):
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, dst)
+                back.append(rel.as_posix())
+    for ref in r.get("keep", []):
+        kind, ns, name = ref.split("/")
+        if not kc("get", kind.lower(), name, "-n", ns, "-o", "name", check=False).strip():
+            man = w["data"].get("keep", {}).get(ref)
+            if man:
+                kc("apply", "-f", "-", stdin=json.dumps(man), check=False)
+                back.append(f"{kind} {name} (ns {ns})")
+    if not back:
+        return
+    n = w.setdefault("restores", {}).get(str(i + 1), 0) + 1
+    w["restores"][str(i + 1)] = n
+    cost = ""
+    if n > 1:
+        w["hints"][str(i + 1)] = w["hints"].get(str(i + 1), 0) + 1
+        cost = f" This restore counts as 1 hint (-{DIFF[settings(s)['difficulty']]['hint_cost']} XP)."
+    save(s)
+    con.print(Panel("[bold]" + ", ".join(back) + "[/] " + ("was" if len(back) == 1 else "were") +
+                    " deleted, but the puzzle needs " + ("it" if len(back) == 1 else "them") + ". I put the original back."
+                    + (cost or " (Free this time: the next restore in this room counts as a hint.)"),
+                    title="[bold yellow]restored[/]", border_style="yellow"))
 
 
 def room_dir(key, i):
@@ -1064,6 +1119,10 @@ def _autocheck(key, s):
     i = w["room"]
     if not w["built"] or i >= len(W["rooms"]):
         return 10 if i >= len(W["rooms"]) else 0
+    try:
+        repair(key, s)
+    except Exception:
+        pass
     r = W["rooms"][i]
     if r.get("answer") or r.get("typed"):   # these wait for a typed answer
         return 0

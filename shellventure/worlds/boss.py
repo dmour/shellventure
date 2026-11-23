@@ -40,6 +40,7 @@ def make(api):
             if "quota" in faults:
                 items.insert(0, {"apiVersion": "v1", "kind": "ResourceQuota", "metadata": {"name": "lock", "namespace": NS},
                                  "spec": {"hard": {"pods": "0"}}})
+            api.remember(w, items)
             kc("apply", "-f", "-", stdin=json.dumps({"apiVersion": "v1", "kind": "List", "items": items}))
             (d / "README.txt").parent.mkdir(parents=True, exist_ok=True)
             (d / "README.txt").write_text("Boss namespace: boss\n")
@@ -97,7 +98,7 @@ def make(api):
 
     return {"boss": {
         "title": "Boss Fight", "needs": ["kind", "docker", "kubectl"], "dir": "boss", "setup": setup, "kind": True, "namespaces": [NS], "bonus": bonus, "rooms": [
-            {"name": "The Three-Headed Deploy", "check": check,
+            {"name": "The Three-Headed Deploy", "check": check, "keep": ["Deployment/boss/boss-app", "Service/boss/boss", "Secret/boss/boss-secret"],
              "story": "Namespace [bold]boss[/]. [bold]Three[/] things are broken at once. Each fix shows the next head.\n"
                       "Thursday = 50 XP (+25 under 15 min). Other days = practice (10 XP). New faults each reset.",
              "task": "Make deploy/boss-app Ready and Service [bold]boss[/] send traffic to it.\nThen: [cyan]check[/]",

@@ -46,6 +46,19 @@ def hint_part(world, part, label):
     print(f"  {'✔' if ok else '✘'} {world} {label}: hint is for part {part}")
 
 
+def repaired(world, path, expect_back, expect_hints, label):
+    """Auto-repair: a deleted puzzle file comes back at the next prompt; the 2nd restore costs a hint."""
+    out = esc("_autocheck", world=world)
+    back = path.exists()
+    st = json.loads((ROOM / ".state.json").read_text())["worlds"][world]
+    room = str(st["room"] + 1)
+    hints = st["hints"].get(room, 0)
+    ok = back == expect_back and hints == expect_hints
+    if not ok:
+        fails.append(f"{world} {label}: expected back={expect_back} hints={expect_hints}, got back={back} hints={hints}\n{out[-300:]}")
+    print(f"  {'✔' if ok else '✘'} {world} {label}: file {'restored' if back else 'not restored'}, hints {hints}")
+
+
 def d(world, sub=""):
     return ROOM / world / sub
 
@@ -54,6 +67,10 @@ def d(world, sub=""):
 def bash():
     check("bash", 1, "definitely-wrong", expect=False)
     check("bash", 1, sh("find . -type f -name '.*' -exec cat {} + | grep KEY= | cut -d= -f2", d("bash", "1-haystack")))
+    (d("bash", "2-noisy-log") / "access.log").unlink()
+    repaired("bash", d("bash", "2-noisy-log") / "access.log", True, 0, "room 2 log deleted (1st: free)")
+    (d("bash", "2-noisy-log") / "access.log").unlink()
+    repaired("bash", d("bash", "2-noisy-log") / "access.log", True, 1, "room 2 log deleted again (= 1 hint)")
     check("bash", 2, sh("awk '$9==500 {print $1}' access.log | sort | uniq -c | sort -rn | head -1 | awk '{print $2}'", d("bash", "2-noisy-log")))
     hint_part("bash", 1, "room 3 nothing fixed")
     sh("chmod +x open-door.sh && sed -i 's/\\r$//' open-door.sh", d("bash", "3-broken-script"))   # parts 3 and 1, not 2
@@ -65,6 +82,9 @@ def bash():
 
 def git():
     check("git", 1, "nope-00", expect=False)
+    (d("git", "1-lost-commit") / "config.ini").unlink()
+    repaired("git", d("git", "1-lost-commit") / "config.ini", False, 0, "room 1 git repo: no file repair")
+    sh("git checkout -q -- config.ini", d("git", "1-lost-commit"))
     check("git", 1, sh("git log -S 'code =' -p -- config.ini | grep '^+code' | head -1 | awk '{print $3}'", d("git", "1-lost-commit")))
     check("git", 2, sh("h=$(git reflog | grep 'hide the treasure' | awk '{print $1}' | head -1); git show \"$h:treasure.txt\" | awk '{print $4}'", d("git", "2-deleted-branch")))
     check("git", 3, sh("git blame -L 23,23 --porcelain guard.txt | grep '^author ' | cut -d' ' -f2", d("git", "3-who-did-it")))

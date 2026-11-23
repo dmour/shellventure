@@ -93,7 +93,12 @@ def docker():
     hint_part("docker", 1, "room 1 nothing fixed")
     sh("sed -i 's/door-code.txt/door_code.txt/' Dockerfile", r)
     hint_part("docker", 2, "room 1 COPY fixed")
-    sh("echo '!door_code.txt' >> .dockerignore", r)
+    sh("rm .dockerignore", r)                                   # a valid fix: deleting it must NOT be undone
+    esc("_autocheck", world="docker")
+    ok = not (r / ".dockerignore").exists()
+    print(f"  {'✔' if ok else '✘'} docker room 1 deleted .dockerignore (allowed): {'left deleted' if ok else 'wrongly restored'}", flush=True)
+    if not ok:
+        fails.append("docker room 1: .dockerignore is in may_delete but was restored")
     sh("docker build -q -t shellventure/door:1 .", r, check=True)
     check("docker", 1)
     r = d("docker", "2-fat-image")
@@ -270,6 +275,11 @@ def cka():
     sh(f"{K} delete networkpolicy default-deny -n cka5")       # plant: an open wall must NOT pass
     hint_part("cka", 2, "room 5 wall removed (intruder gets in)")
     check("cka", 5, expect=False)
+    esc("_autocheck", world="cka")                              # auto-repair puts the wall back
+    ok = bool(sh(f"{K} get networkpolicy default-deny -n cka5 -o name"))
+    print(f"  {'✔' if ok else '✘'} cka room 5 deleted default-deny: {'restored' if ok else 'NOT restored'}", flush=True)
+    if not ok:
+        fails.append("cka room 5: auto-repair did not restore NetworkPolicy default-deny")
     sh(f"{K} apply -n cka5 -f - <<'EOF'\n"
        "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: {name: default-deny}\n"
        "spec: {podSelector: {}, policyTypes: [Ingress]}\n---\n"

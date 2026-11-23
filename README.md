@@ -137,6 +137,9 @@ normal · hard; story mode: *First week as SRE*), **Quit**.
 - The room's **name, task, time and hints left stay pinned at the top** while your output scrolls below
   (small screens get a thin bar above the prompt instead).
 - After each door: a **"what you learned"** card with the room's key command.
+- **Auto-repair:** delete something the puzzle needs (a file, or a Kubernetes object like the NetworkPolicy
+  the room is about) and the game warns you and puts the original back. The first restore in a room is free;
+  each later one counts as a hint. Things you are meant to delete (a quota, a bad RoleBinding) are left alone.
 - **Clean laptop:** finishing a world removes its containers/namespaces, and the kind cluster stops when no
   Kubernetes world is in progress (also on Quit). It comes back in ~1 min when you play one again.
 - **Smart hints:** rooms with several problems know what you already fixed. `hint` shows ✔ for the fixed parts
