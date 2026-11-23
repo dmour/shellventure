@@ -46,17 +46,19 @@ def hint_part(world, part, label):
     print(f"  {'✔' if ok else '✘'} {world} {label}: hint is for part {part}")
 
 
-def repaired(world, path, expect_back, expect_hints, label):
-    """Auto-repair: a deleted puzzle file comes back at the next prompt; the 2nd restore costs a hint."""
-    out = esc("_autocheck", world=world)
+def repaired(world, path, expect_back, expect_cost, label, prompts=2):
+    """Auto-repair: a deleted puzzle file gets one prompt of grace, then comes back; the 2nd restore costs like a hint
+    (in its own counter, so the hint order never shifts)."""
+    for _ in range(prompts):
+        out = esc("_autocheck", world=world)
     back = path.exists()
     st = json.loads((ROOM / ".state.json").read_text())["worlds"][world]
     room = str(st["room"] + 1)
-    hints = st["hints"].get(room, 0)
-    ok = back == expect_back and hints == expect_hints
+    cost, hints = st.get("restore_cost", {}).get(room, 0), st["hints"].get(room, 0)
+    ok = back == expect_back and cost == expect_cost and hints == 0
     if not ok:
-        fails.append(f"{world} {label}: expected back={expect_back} hints={expect_hints}, got back={back} hints={hints}\n{out[-300:]}")
-    print(f"  {'✔' if ok else '✘'} {world} {label}: file {'restored' if back else 'not restored'}, hints {hints}")
+        fails.append(f"{world} {label}: expected back={expect_back} cost={expect_cost} hints=0, got back={back} cost={cost} hints={hints}\n{out[-300:]}")
+    print(f"  {'✔' if ok else '✘'} {world} {label}: file {'restored' if back else 'not restored'}, restore cost {cost}")
 
 
 def d(world, sub=""):
@@ -67,10 +69,21 @@ def d(world, sub=""):
 def bash():
     check("bash", 1, "definitely-wrong", expect=False)
     check("bash", 1, sh("find . -type f -name '.*' -exec cat {} + | grep KEY= | cut -d= -f2", d("bash", "1-haystack")))
-    (d("bash", "2-noisy-log") / "access.log").unlink()
-    repaired("bash", d("bash", "2-noisy-log") / "access.log", True, 0, "room 2 log deleted (1st: free)")
-    (d("bash", "2-noisy-log") / "access.log").unlink()
-    repaired("bash", d("bash", "2-noisy-log") / "access.log", True, 1, "room 2 log deleted again (= 1 hint)")
+    log = d("bash", "2-noisy-log") / "access.log"
+    keep = log.read_bytes()
+    log.unlink()
+    repaired("bash", log, False, 0, "room 2 log deleted, 1 prompt later (grace)", prompts=1)
+    log.write_bytes(keep)                                       # the player recreates it in the next command
+    repaired("bash", log, True, 0, "room 2 log recreated by player (no restore)", prompts=1)
+    log.unlink()
+    repaired("bash", log, True, 0, "room 2 log deleted (1st restore: free)")
+    log.unlink()
+    repaired("bash", log, True, 1, "room 2 log deleted again (costs like a hint)")
+    hint_out = esc("_hint", world="bash")
+    ok = "hint 1/3" in hint_out
+    print(f"  {'✔' if ok else '✘'} bash room 2 after a paid restore: hint starts at 1/3")
+    if not ok:
+        fails.append("bash room 2: a paid restore shifted the hint order\n" + hint_out[-200:])
     check("bash", 2, sh("awk '$9==500 {print $1}' access.log | sort | uniq -c | sort -rn | head -1 | awk '{print $2}'", d("bash", "2-noisy-log")))
     hint_part("bash", 1, "room 3 nothing fixed")
     sh("chmod +x open-door.sh && sed -i 's/\\r$//' open-door.sh", d("bash", "3-broken-script"))   # parts 3 and 1, not 2
@@ -87,7 +100,13 @@ def practice_run():
     esc("practice", "add", "bash", "1", "test")
     q = state().get("practice", [])
     ok1 = len(q) == 1 and q[0]["world"] == "bash" and q[0]["room"] == 0
-    esc("practice", "play", "1")                    # no keyboard: the game shell exits at once
+    esc("practice", "play", "1")                    # no keyboard: the shell exits at once = practice left unsolved
+    w = state()["worlds"]["bash"]
+    ok0 = not w.get("practice") and w["room"] == 4 and len(state().get("practice", [])) == 1
+    print(f"  {'✔' if ok0 else '✘'} practice: left unsolved -> world back to escaped, still queued")
+    if not ok0:
+        fails.append(f"practice: leaving unsolved did not give the world back: {json.dumps({k: w.get(k) for k in ('room', 'practice')})}")
+    esc("practice", "_prep", "1")
     w = state()["worlds"]["bash"]
     ok2 = w.get("practice") is True and w["room"] == 0
     check("bash", "1 (practice)", sh("find . -type f -name '.*' -exec cat {} + | grep KEY= | cut -d= -f2", d("bash", "1-haystack")))

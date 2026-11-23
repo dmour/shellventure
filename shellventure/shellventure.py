@@ -703,7 +703,8 @@ def build(key, s):
     if not W.get("kind") and d.exists():
         shutil.rmtree(d)
     d.mkdir(parents=True, exist_ok=True)
-    w.update(built=False, room=0, hints={}, solved=[], answers={}, data={}, start=None, restores={})
+    w.update(built=False, room=0, hints={}, solved=[], answers={}, data={}, start=None, restores={},
+             restore_cost={}, pending_missing={}, practice=False)
     if W.get("kind"):
         W["setup"](d, w)
     else:
@@ -727,43 +728,59 @@ def remember(w, items):
         store[f"{it['kind']}/{md.get('namespace', '')}/{md['name']}"] = it
 
 
+def kraw(*args, stdin=None):
+    """kubectl on the game cluster, returning the whole result (repair must tell NotFound from other errors)."""
+    return subprocess.run(["kubectl", "--kubeconfig", str(KUBECONFIG), "--context", f"kind-{KIND_NAME}", *args],
+                          input=stdin, capture_output=True, text=True)
+
+
 def repair(key, s):
-    """Before every prompt: a required piece of the current room that was deleted is restored, with a warning.
-    The first restore in a room is free; each later one counts as a hint (his rule, 2026-11-23)."""
+    """Before every prompt: a required piece of the current room that is gone gets one prompt of grace (so
+    "delete, then create it again" fixes work), then the original is put back with a warning.
+    The first restore in a room is free; each later one costs like a hint, in its own counter (his rule, 2026-11-23)."""
     W, w = WORLDS[key], world_state(s, key)
     i = w["room"]
     if not w.get("built") or i >= len(W["rooms"]):
         return
-    r, back = W["rooms"][i], []
-    orig = ROOT / ".originals" / key / room_dir(key, i).relative_to(ROOT / W["dir"])
-    if orig.is_dir() and not (room_dir(key, i) / ".git").exists():   # git rooms: checkout/bisect remove files on purpose
-        for f in orig.rglob("*"):
-            rel = f.relative_to(orig)
-            dst = room_dir(key, i) / rel
-            if f.is_file() and not dst.exists() and not dst.is_symlink() and rel.as_posix() not in r.get("may_delete", []):
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(f, dst)
-                back.append(rel.as_posix())
+    r, rd, room = W["rooms"][i], room_dir(key, i), str(i + 1)
+    gone = {}   # id -> (label, restore() -> bool)
+    orig = ROOT / ".originals" / key / rd.relative_to(ROOT / W["dir"])
+    if orig.is_dir() and not (rd / ".git").exists():   # git rooms: checkout/bisect remove files on purpose
+        files = orig.rglob("*") if r.get("dir") else orig.iterdir()   # no own folder: only the world's top-level files
+        for f in files:
+            rel = f.relative_to(orig).as_posix()
+            dst = rd / rel
+            if f.is_file() and not dst.exists() and not dst.is_symlink() and rel not in r.get("may_delete", []):
+                gone["file:" + rel] = (rel, lambda f=f, dst=dst: (dst.parent.mkdir(parents=True, exist_ok=True),
+                                                                  shutil.copy2(f, dst)) and True)
     for ref in r.get("keep", []):
         kind, ns, name = ref.split("/")
-        if not kc("get", kind.lower(), name, "-n", ns, "-o", "name", check=False).strip():
-            man = w["data"].get("keep", {}).get(ref)
-            if man:
-                kc("apply", "-f", "-", stdin=json.dumps(man), check=False)
-                back.append(f"{kind} {name} (ns {ns})")
-    if not back:
-        return
-    n = w.setdefault("restores", {}).get(str(i + 1), 0) + 1
-    w["restores"][str(i + 1)] = n
-    cost = ""
-    if n > 1:
-        w["hints"][str(i + 1)] = w["hints"].get(str(i + 1), 0) + 1
-        cost = f" This restore counts as 1 hint (-{DIFF[settings(s)['difficulty']]['hint_cost']} XP)."
+        man = w["data"].get("keep", {}).get(ref)
+        g = kraw("get", kind.lower(), name, "-n", ns, "-o", "name")
+        if man and g.returncode != 0 and "NotFound" in g.stderr:   # a slow or stopped cluster is NOT "deleted"
+            gone["k8s:" + ref] = (f"{kind} {name} (ns {ns})",
+                                  lambda man=man: kraw("apply", "-f", "-", stdin=json.dumps(man)).returncode == 0)
+    pending = set(w.setdefault("pending_missing", {}).get(room, []))
+    new = [k for k in gone if k not in pending]
+    back = [gone[k][0] for k in gone if k in pending and gone[k][1]()]
+    w["pending_missing"][room] = new
+    if back:
+        n = w.setdefault("restores", {}).get(room, 0) + 1
+        w["restores"][room] = n
+        cost = ""
+        if n > 1:
+            w.setdefault("restore_cost", {})[room] = w.get("restore_cost", {}).get(room, 0) + 1
+            cost = f" This restore costs like a hint (-{DIFF[settings(s)['difficulty']]['hint_cost']} XP)."
     save(s)
-    con.print(Panel("[bold]" + ", ".join(back) + "[/] " + ("was" if len(back) == 1 else "were") +
-                    " deleted, but the puzzle needs " + ("it" if len(back) == 1 else "them") + ". I put the original back."
-                    + (cost or " (Free this time: the next restore in this room counts as a hint.)"),
-                    title="[bold yellow]restored[/]", border_style="yellow"))
+    if new:
+        con.print(f"[yellow]⚠ missing: {', '.join(gone[k][0] for k in new)}.[/] [grey50]The puzzle needs "
+                  f"{'it' if len(new) == 1 else 'them'}. Recreating it yourself? Go ahead. Still missing at the next prompt = "
+                  f"I put the original back.[/]")
+    if back:
+        con.print(Panel("[bold]" + ", ".join(back) + "[/] " + ("was" if len(back) == 1 else "were") +
+                        " still missing. I put the original back."
+                        + (cost or " (Free this time: the next restore in this room costs like a hint.)"),
+                        title="[bold yellow]restored[/]", border_style="yellow"))
 
 
 def room_dir(key, i):
@@ -827,11 +844,7 @@ def tidy_up(s, finished=None):
     if not any(in_progress(s, k) for k in kind_worlds):
         with con.status("[cyan]Stopping the practice cluster (no Kubernetes world needs it)...", spinner="dots12"):
             sh(["kind", "delete", "cluster", "--name", KIND_NAME], check=False)
-        KUBECONFIG.unlink(missing_ok=True)
-        for k in kind_worlds:
-            if k in s["worlds"]:
-                s["worlds"][k]["built"] = False   # a replay rebuilds it fresh
-        save(s)
+        KUBECONFIG.unlink(missing_ok=True)   # no world is in progress, so a replay rebuilds after its y/n question
         con.print("[grey50]cleaned: practice cluster stopped (frees ~700 MB). It comes back in ~1 min when you play a Kubernetes world.[/]")
     elif finished and WORLDS[finished].get("namespaces"):
         for ns in WORLDS[finished]["namespaces"]:
@@ -857,6 +870,10 @@ def practice_due(s):
 def practice_start(s, p):
     """Rebuild the world with fresh puzzles and jump straight to the room to redo."""
     key, i = p["world"], p["room"]
+    miss = missing_tools(key)
+    if miss:
+        con.print(f"[yellow]{WORLDS[key]['title']} needs: {', '.join(miss)}. Install, then practice.[/]")
+        return False
     if in_progress(s, key):
         con.print(f"[yellow]Finish {WORLDS[key]['title']} first (it is in progress), then practice this room.[/]")
         return False
@@ -906,7 +923,8 @@ def do_check(key, s, arg):
         return
     used = w["hints"].get(str(i + 1), 0)
     dif = DIFF[settings(s)["difficulty"]]
-    pts = max(round((15 - dif["hint_cost"] * used) * dif["mult"]), 3)
+    paid = w.get("restore_cost", {}).get(str(i + 1), 0)
+    pts = max(round((15 - dif["hint_cost"] * (used + paid)) * dif["mult"]), 3)
     w["solved"].append(i + 1)
     w["room"] += 1
     save(s)
@@ -914,7 +932,8 @@ def do_check(key, s, arg):
     con.print(Align.center(f"[bold green]{r['name']} OPENED![/]  +{pts} XP"))
     award(pts, f"escape {key}: {r['name']}", SKILL_OF.get(key, W.get("skill")))
     learn_card(r, w)
-    all_hints = used >= min(dif["max_hints"], len(r["hints"]))
+    steps = room_steps(r, w)
+    all_hints = used >= (dif["max_hints"] * len(steps) if steps else min(dif["max_hints"], len(r["hints"])))
     if w.get("practice"):   # a practice run is one room only
         s["practice"] = [p for p in s.get("practice", []) if not (p["world"] == key and p["room"] == i)]
         if all_hints:
@@ -1246,6 +1265,7 @@ _esc_pin() {{
 }}
 # clear / Ctrl+L would put the prompt on row 1, inside the header: start below it instead
 clear() {{ command clear; printf '\\e[{PIN_ROWS + 1};1H'; }}
+reset() {{ command reset; printf '\\e[{PIN_ROWS + 1};1H'; }}
 bind -x '"\\C-l": clear' 2>/dev/null
 _esc_auto() {{ local rc=$?; {me} _autocheck; [ $? = 10 ] && {{ sleep 2; exit; }}; cd "$({me} _dir)" 2>/dev/null; _esc_pin; return $rc; }}
 PROMPT_COMMAND=_esc_auto
@@ -1257,6 +1277,12 @@ cd "{room_dir(key, w['room'])}"
     subprocess.call(["bash", "--rcfile", str(rc), "-i"], env=env)
     sys.stdout.write("\033[r\033[2J\033[H"); sys.stdout.flush()   # undo the pinned header's scroll region
     s = load()
+    pw = world_state(s, key)
+    if pw.get("practice"):   # left a practice run unsolved: the world is not "in progress" because of it
+        pw.update(practice=False, room=len(W["rooms"]) if pw.get("escapes") else 0)
+        pw["built"] = pw["built"] and bool(pw.get("escapes"))
+        save(s)
+        con.print("[grey50]Practice left unsolved: it stays in your queue.[/]")
     s["active"] = None
     save(s)
     con.print("[magenta]You left the lab. Your progress is saved.[/] Back with: shellventure play " + key)
@@ -1527,8 +1553,15 @@ def main(argv):
         con.print(f"[green]{WORLDS[argv[2]]['title']} rebuilt with new puzzles.[/] Play: shellventure play {argv[2]}")
     elif cmd == "practice":   # list | add <world> <room#> [why] | play <n>
         sub = argv[2] if len(argv) > 2 else "list"
-        if sub == "add" and len(argv) > 4 and argv[3] in WORLDS:
-            practice_add(s, argv[3], int(argv[4]) - 1, " ".join(argv[5:]) or "added by hand"); save(s)
+        if sub == "add":
+            n = int(argv[4]) if len(argv) > 4 and argv[4].isdigit() else 0
+            if len(argv) < 5 or argv[3] not in WORLDS or not 1 <= n <= len(WORLDS[argv[3]]["rooms"]):
+                con.print("[yellow]usage: practice add <world> <room#> [why][/]"); return 2
+            practice_add(s, argv[3], n - 1, " ".join(argv[5:]) or "added by hand"); save(s)
+        if sub == "_prep" and len(argv) > 3:   # tests: start a practice run without opening the game shell
+            q = s.get("practice", [])
+            n = int(argv[3]) - 1
+            return 0 if 0 <= n < len(q) and practice_start(s, q[n]) else 1
         if sub == "play" and len(argv) > 3:
             q = s.get("practice", [])
             n = int(argv[3]) - 1

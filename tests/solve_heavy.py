@@ -275,7 +275,8 @@ def cka():
     sh(f"{K} delete networkpolicy default-deny -n cka5")       # plant: an open wall must NOT pass
     hint_part("cka", 2, "room 5 wall removed (intruder gets in)")
     check("cka", 5, expect=False)
-    esc("_autocheck", world="cka")                              # auto-repair puts the wall back
+    esc("_autocheck", world="cka")                              # 1st prompt: warning (grace for delete-then-create)
+    esc("_autocheck", world="cka")                              # 2nd prompt: auto-repair puts the wall back
     ok = bool(sh(f"{K} get networkpolicy default-deny -n cka5 -o name"))
     print(f"  {'✔' if ok else '✘'} cka room 5 deleted default-deny: {'restored' if ok else 'NOT restored'}", flush=True)
     if not ok:
@@ -292,6 +293,20 @@ def cka():
        "--cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/server.crt "
        "--key=/etc/kubernetes/pki/etcd/server.key snapshot save /var/lib/etcd/snapshot.db", check=True)
     check("cka", 6)
+    # practice a Kubernetes room after the world is escaped (cluster stopped by tidy-up): rebuilds, one room, queue empties
+    st = lambda: json.loads((ROOT / ".state.json").read_text())
+    esc("practice", "add", "cka", "1", "test")
+    esc("practice", "_prep", "1")
+    w = st()["worlds"]["cka"]
+    ok = w.get("practice") is True and w["room"] == 0
+    sh(f"{K} label node {node} disktype=ssd --overwrite", check=True)
+    rollout("cka1", "picky")
+    check("cka", "1 (practice)", tries=3)
+    s2 = st(); w = s2["worlds"]["cka"]
+    ok = ok and not s2.get("practice") and w["room"] == 6 and not w.get("practice")
+    print(f"  {'✔' if ok else '✘'} cka practice room 1: rebuilt, solved, off the queue, world still escaped", flush=True)
+    if not ok:
+        fails.append(f"cka practice failed: {json.dumps(s2.get('practice'))} {json.dumps({k: w.get(k) for k in ('room', 'practice')})}")
 
 
 SOLVERS = {"docker": docker, "sql": sql, "gcloud": gcloud, "k8s": k8s, "helm": helm, "network": network, "cka": cka, "boss": boss}
